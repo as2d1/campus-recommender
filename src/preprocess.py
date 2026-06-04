@@ -42,7 +42,6 @@ class PreprocessResult:
     tags: pd.DataFrame
     post_tags: pd.DataFrame
     behaviors: pd.DataFrame
-    questionnaire: pd.DataFrame
     user_profiles: pd.DataFrame
     samples: pd.DataFrame
     train_samples: pd.DataFrame
@@ -90,15 +89,12 @@ def parse_time_columns(data: CampusData) -> CampusData:
     post_stats = data.post_stats.copy()
     comments = data.comments.copy()
     behaviors = data.behaviors.copy()
-    questionnaire = data.questionnaire.copy()
     user_profiles = data.user_profiles.copy()
 
-    users["register_time"] = pd.to_datetime(users["register_time"], errors="coerce")
     posts["publish_time"] = pd.to_datetime(posts["publish_time"], errors="coerce")
     post_stats["update_time"] = pd.to_datetime(post_stats["update_time"], errors="coerce")
     comments["publish_time"] = pd.to_datetime(comments["publish_time"], errors="coerce")
     behaviors["timestamp"] = pd.to_datetime(behaviors["timestamp"], errors="coerce")
-    questionnaire["filled_time"] = pd.to_datetime(questionnaire["filled_time"], errors="coerce")
     if not user_profiles.empty and "last_update_time" in user_profiles.columns:
         user_profiles["last_update_time"] = pd.to_datetime(user_profiles["last_update_time"], errors="coerce")
 
@@ -110,7 +106,6 @@ def parse_time_columns(data: CampusData) -> CampusData:
         tags=data.tags.copy(),
         post_tags=data.post_tags.copy(),
         behaviors=behaviors,
-        questionnaire=questionnaire,
         user_profiles=user_profiles,
     )
 
@@ -119,16 +114,6 @@ def clean_users(users: pd.DataFrame) -> pd.DataFrame:
     users = users.copy()
     defaults = {
         "nickname": "",
-        "user_level": 1,
-        "user_level_title": "普通用户",
-        "grade": "未知年级",
-        "college": "未知学院",
-        "major": "未知专业",
-        "campus": "未知校区",
-        "interest_tags": "",
-        "is_new_user": 0,
-        "questionnaire_filled": 0,
-        "default_location": "教学区",
         "status": "normal",
     }
     for column, value in defaults.items():
@@ -136,9 +121,6 @@ def clean_users(users: pd.DataFrame) -> pd.DataFrame:
             users[column] = value
     users = users.fillna(defaults)
     users = users[users["status"].eq("normal")]
-    users["is_new_user"] = users["is_new_user"].astype(int)
-    users["questionnaire_filled"] = users["questionnaire_filled"].astype(int)
-    users["user_level"] = pd.to_numeric(users["user_level"], errors="coerce").fillna(1).astype(int)
     return users.drop_duplicates("user_id", keep="last").reset_index(drop=True)
 
 
@@ -195,7 +177,6 @@ def clean_posts(posts: pd.DataFrame, post_stats: pd.DataFrame, now: pd.Timestamp
         "has_image": 0,
         "tags": "",
         "topic_type": "",
-        "location_scope": "全校",
         "price": 0,
         "need_pay": 0,
         "has_contact_info": 0,
@@ -237,9 +218,6 @@ def clean_behaviors(behaviors: pd.DataFrame, users: pd.DataFrame, posts: pd.Data
         "action_weight": 1,
         "dwell_time": 0,
         "time_period": "",
-        "location": "教学区",
-        "device_type": "mobile",
-        "scene": "普通浏览",
         "is_positive": np.nan,
         "source": "unknown",
     }
@@ -287,9 +265,6 @@ def build_behavior_samples(behaviors: pd.DataFrame) -> pd.DataFrame:
             "action_type",
             "dwell_time",
             "time_period",
-            "location",
-            "device_type",
-            "scene",
             "label",
             "sample_source",
         ]
@@ -329,9 +304,6 @@ def negative_sampling(
                     "action_type": "negative_sample",
                     "dwell_time": 0,
                     "time_period": get_time_period(latest_time),
-                    "location": getattr(user, "default_location", "教学区"),
-                    "device_type": "unknown",
-                    "scene": "negative_sampling",
                     "label": 0,
                     "sample_source": "negative_sampling",
                 }
@@ -369,10 +341,8 @@ def split_train_test_by_time(samples: pd.DataFrame, test_ratio: float = 0.2) -> 
     return samples.iloc[:split_index].reset_index(drop=True), samples.iloc[split_index:].reset_index(drop=True)
 
 
-def clean_side_tables(data: CampusData, valid_posts: pd.DataFrame, valid_users: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def clean_side_tables(data: CampusData, valid_posts: pd.DataFrame, valid_users: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     valid_post_ids = set(valid_posts["post_id"])
-    valid_user_ids = set(valid_users["user_id"])
-
     comments = data.comments.copy()
     comments = comments[comments["post_id"].isin(valid_post_ids)]
     comments = comments[comments["status"].fillna("normal").eq("normal")]
@@ -381,14 +351,12 @@ def clean_side_tables(data: CampusData, valid_posts: pd.DataFrame, valid_users: 
     post_tags = data.post_tags.copy()
     post_tags = post_tags[post_tags["post_id"].isin(valid_post_ids)].drop_duplicates()
 
-    questionnaire = data.questionnaire.copy()
-    questionnaire = questionnaire[questionnaire["user_id"].isin(valid_user_ids)].drop_duplicates("user_id", keep="last")
-
     profiles = data.user_profiles.copy()
     if not profiles.empty:
+        valid_user_ids = set(valid_users["user_id"])
         profiles = profiles[profiles["user_id"].isin(valid_user_ids)].drop_duplicates("user_id", keep="last")
 
-    return comments.reset_index(drop=True), data.tags.copy().drop_duplicates("tag_id"), post_tags.reset_index(drop=True), questionnaire.reset_index(drop=True), profiles.reset_index(drop=True)
+    return comments.reset_index(drop=True), data.tags.copy().drop_duplicates("tag_id"), post_tags.reset_index(drop=True), profiles.reset_index(drop=True)
 
 
 def preprocess_all(
@@ -403,7 +371,7 @@ def preprocess_all(
     users = clean_users(data.users)
     posts, post_stats = clean_posts(data.posts, data.post_stats)
     behaviors = clean_behaviors(data.behaviors, users, posts)
-    comments, tags, post_tags, questionnaire, user_profiles = clean_side_tables(data, posts, users)
+    comments, tags, post_tags, user_profiles = clean_side_tables(data, posts, users)
     samples = build_labeled_samples(
         users=users,
         posts=posts,
@@ -420,7 +388,6 @@ def preprocess_all(
         tags=tags,
         post_tags=post_tags,
         behaviors=behaviors,
-        questionnaire=questionnaire,
         user_profiles=user_profiles,
         samples=samples,
         train_samples=train_samples,

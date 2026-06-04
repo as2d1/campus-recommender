@@ -5,7 +5,7 @@
       <button class="ghost-icon" @click="loadProfile">刷新</button>
       <div class="avatar">👨🏻‍🎓</div>
       <h1>{{ shortUserId }}</h1>
-      <p>{{ profile.college || '未知学院' }} · {{ profile.grade || '未知年级' }}</p>
+      <p>{{ profile.nickname || '匿名用户' }}</p>
       <section class="user-switch profile-switch">
         <input v-model="userInput" placeholder="输入 user_id" />
         <button @click="applyUser">切换</button>
@@ -16,12 +16,6 @@
     <EmptyState v-else-if="error" title="画像加载失败" :description="error" button-text="重试" @action="loadProfile" />
 
     <template v-else>
-      <section class="stat-row">
-        <div><b>36</b><span>发布</span></div>
-        <div><b>128</b><span>获赞</span></div>
-        <div><b>24</b><span>收藏</span></div>
-      </section>
-
       <section class="panel">
         <h2>我的兴趣画像</h2>
         <div class="profile-tags">
@@ -29,7 +23,7 @@
           <TagBadge v-for="tag in tags(profile.short_term_tags)" :key="`s-${tag}`" :label="tag" />
         </div>
         <p class="muted">常看板块：{{ profile.preferred_boards || '暂无' }}</p>
-        <p class="muted">活跃时间段：{{ profile.active_time_period || '未知' }} · 常用位置：{{ profile.preferred_location || '未知' }}</p>
+        <p class="muted">活跃时间段：{{ profile.active_time_period || '未知' }}</p>
       </section>
 
       <section class="panel">

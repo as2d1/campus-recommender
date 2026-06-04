@@ -94,7 +94,7 @@ async function loadDetail() {
       post_id: String(route.params.id),
       action_type: 'view',
       dwell_time: 20,
-      context: { time_period: '晚上', location: '宿舍区', device_type: 'pc', scene: '详情页' }
+      context: { time_period: '晚上' }
     })
   } catch (err) {
     error.value = err.message
@@ -110,7 +110,7 @@ async function sendAction(actionType) {
       post_id: String(route.params.id),
       action_type: actionType,
       dwell_time: 30,
-      context: { time_period: '晚上', location: '宿舍区', device_type: 'pc', scene: '详情页' }
+      context: { time_period: '晚上' }
     })
     message.value = actionType === 'like' ? '已点赞' : '已收藏'
     setTimeout(() => (message.value = ''), 1500)

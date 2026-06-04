@@ -22,16 +22,10 @@ TRAINING_SAMPLE_COLUMNS = [
     "user_id",
     "post_id",
     "label",
-    "grade",
-    "college",
-    "major",
-    "campus",
     "board",
     "tags",
     "topic_type",
     "time_period",
-    "location",
-    "location_scope",
     "hot_score",
     "final_hot_score",
     "quality_score",
@@ -39,7 +33,6 @@ TRAINING_SAMPLE_COLUMNS = [
     "itemcf_score",
     "profile_match_score",
     "time_scene_score",
-    "location_scene_score",
     "multi_interest_score",
     "source_count",
     "recall_sources",
@@ -111,17 +104,8 @@ def add_post_features(posts: pd.DataFrame, now: pd.Timestamp | None = None) -> p
 
 
 def build_user_features(users: pd.DataFrame, user_profiles: pd.DataFrame) -> pd.DataFrame:
-    user_columns = [
-        "user_id",
-        "grade",
-        "college",
-        "major",
-        "campus",
-        "interest_tags",
-        "default_location",
-    ]
+    user_columns = ["user_id"]
     features = users[user_columns].copy()
-    features = features.rename(columns={"default_location": "preferred_location"})
     if not user_profiles.empty:
         profile_columns = [
             "user_id",
@@ -129,13 +113,9 @@ def build_user_features(users: pd.DataFrame, user_profiles: pd.DataFrame) -> pd.
             "short_term_tags",
             "preferred_boards",
             "active_time_period",
-            "preferred_location",
         ]
         existing_columns = [column for column in profile_columns if column in user_profiles.columns]
         features = features.merge(user_profiles[existing_columns], on="user_id", how="left", suffixes=("", "_profile"))
-        if "preferred_location_profile" in features.columns:
-            features["preferred_location"] = features["preferred_location_profile"].fillna(features["preferred_location"])
-            features = features.drop(columns=["preferred_location_profile"])
     for column in ["long_term_tags", "short_term_tags", "preferred_boards", "active_time_period"]:
         if column not in features.columns:
             features[column] = ""
@@ -161,7 +141,6 @@ def build_post_feature_table(posts: pd.DataFrame) -> pd.DataFrame:
         "has_image",
         "img_count",
         "has_contact_info",
-        "location_scope",
     ]
     for column in post_columns:
         if column not in posts.columns:
@@ -175,25 +154,6 @@ def tag_overlap_score(user_tags: object, profile_tags: object, post_tags: object
     if not user_tag_set or not post_tag_set:
         return 0.0
     return len(user_tag_set & post_tag_set) / len(user_tag_set | post_tag_set)
-
-
-def is_major_related(row: pd.Series) -> int:
-    text = f"{row.get('board', '')}|{row.get('tags', '')}|{row.get('title', '')}|{row.get('content', '')}"
-    college = str(row.get("college", ""))
-    major = str(row.get("major", ""))
-    if "计算机" in college or major in {"软件工程", "人工智能", "数据科学", "网络工程"}:
-        return int(any(keyword in text for keyword in ["408", "竞赛", "科研", "课程资料", "实习"]))
-    if "管理" in college:
-        return int(any(keyword in text for keyword in ["就业", "简历", "二手闲置", "兼职", "招聘"]))
-    if "公共卫生" in college or "医学" in major:
-        return int(any(keyword in text for keyword in ["考研", "科研", "考试", "课程资料", "实习"]))
-    return int(any(keyword in text for keyword in ["活动", "交友", "学习经验", "社团"]))
-
-
-def location_match(user_location: object, location_scope: object) -> int:
-    if str(location_scope) == "全校":
-        return 1
-    return int(str(user_location) == str(location_scope))
 
 
 def get_semester_phase(timestamp: pd.Timestamp) -> str:
@@ -212,7 +172,6 @@ def time_scene_score(row: pd.Series) -> float:
     tags = set(split_tags(row.get("tags", "")))
     board = str(row.get("board", ""))
     period = str(row.get("time_period", ""))
-    scene = str(row.get("scene", ""))
     semester = get_semester_phase(pd.Timestamp(row.get("timestamp", pd.Timestamp.now())))
     score = 0.0
     if period == "中午" and (board in {"校园趣事", "打听求助"} or {"食堂", "拼饭"} & tags):
@@ -221,8 +180,6 @@ def time_scene_score(row: pd.Series) -> float:
         score += 0.25
     if semester == "考试周" and (board == "打听求助" or {"考试", "复习资料"} & tags):
         score += 0.35
-    if scene == "开学季" and ({"社团", "招新", "新生攻略"} & tags):
-        score += 0.25
     return min(score, 1.0)
 
 
@@ -288,12 +245,7 @@ def build_training_features(
 
     if "time_period" not in features.columns:
         features["time_period"] = features["timestamp"].apply(get_time_period)
-    features["location"] = features["location"].fillna(features["preferred_location"]).fillna("教学区")
-    features["device_type"] = features.get("device_type", "unknown")
-    features["scene"] = features.get("scene", "普通浏览")
     features["is_weekend"] = features["timestamp"].dt.dayofweek.isin([5, 6]).astype(int)
-    features["location_match"] = features.apply(lambda row: location_match(row["location"], row["location_scope"]), axis=1)
-    features["location_scene_score"] = features["location_match"].astype(float)
     features["time_scene_score"] = features.apply(time_scene_score, axis=1)
 
     board_stats, tag_stats = build_behavior_statistics(behaviors, posts)
@@ -301,9 +253,8 @@ def build_training_features(
     features["user_tag_ctr"] = features.apply(lambda row: user_tag_ctr_for_row(row, tag_stats), axis=1)
     features["is_frequent_board"] = (features["user_board_ctr"].fillna(0) >= 0.5).astype(int)
     features["is_preferred_tag"] = (features["user_tag_ctr"].fillna(0) >= 0.5).astype(int)
-    features["major_related"] = features.apply(is_major_related, axis=1)
     features["profile_match_score"] = features.apply(
-        lambda row: tag_overlap_score(row["interest_tags"], row.get("long_term_tags", ""), row["tags"]),
+        lambda row: tag_overlap_score("", row.get("long_term_tags", ""), row["tags"]),
         axis=1,
     )
     features["multi_interest_score"] = features.apply(
@@ -329,7 +280,6 @@ def build_training_features(
         "itemcf_score",
         "profile_match_score",
         "time_scene_score",
-        "location_scene_score",
         "multi_interest_score",
         "source_count",
         "post_age_hours",

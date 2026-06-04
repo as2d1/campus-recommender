@@ -97,14 +97,14 @@ def main() -> None:
         post_id=first_post_id,
         action_type="view",
         dwell_time=35,
-        context={"device_type": "mobile", "scene": "service_test"},
+        context={"time_period": "晚上"},
     )
     like_behavior = service.record_user_behavior(
         user_id=user_id,
         post_id=first_post_id,
         action_type="like",
         dwell_time=35,
-        context={"device_type": "mobile", "scene": "service_test"},
+        context={"time_period": "晚上"},
     )
     print_json("Recorded View Behavior", view_behavior)
     print_json("Recorded Like Behavior", like_behavior)

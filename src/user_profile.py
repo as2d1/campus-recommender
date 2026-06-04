@@ -32,7 +32,6 @@ PROFILE_COLUMNS = [
     "short_term_tags",
     "preferred_boards",
     "active_time_period",
-    "preferred_location",
     "learning_interest_weight",
     "life_interest_weight",
     "social_interest_weight",
@@ -76,13 +75,6 @@ INTEREST_DIRECTIONS = {
 @dataclass
 class UserProfile:
     user_id: str
-    grade: str = ""
-    college: str = ""
-    major: str = ""
-    campus: str = ""
-    interest_tags: set[str] = field(default_factory=set)
-    preferred_location: str = "教学区"
-    is_new_user: int = 0
     long_term_tags: list[str] = field(default_factory=list)
     short_term_tags: list[str] = field(default_factory=list)
     preferred_boards: list[str] = field(default_factory=list)
@@ -195,7 +187,7 @@ def weighted_tag_ranking(df: pd.DataFrame, top_n: int = 8) -> list[str]:
 
 
 def weighted_value_ranking(df: pd.DataFrame, column: str, top_n: int = 4) -> list[str]:
-    """Rank boards/locations/time periods by positive weighted frequency."""
+    """Rank boards or time periods by positive weighted frequency."""
 
     if df.empty or column not in df.columns:
         return []
@@ -264,9 +256,6 @@ def build_user_profile_table(
         avg_dwell_time = float(view_behaviors["dwell_time"].mean()) if not view_behaviors.empty else 0.0
 
         long_term_tags = weighted_tag_ranking(positive, top_n=8)
-        if not long_term_tags:
-            long_term_tags = split_tags(getattr(user, "interest_tags", ""))
-
         short_term_tags = weighted_tag_ranking(recent, top_n=6)
         if not short_term_tags:
             short_term_tags = long_term_tags[:6]
@@ -277,7 +266,6 @@ def build_user_profile_table(
             top_n=4,
         )
         active_time_period = weighted_value_ranking(user_behaviors, "time_period", top_n=1)
-        preferred_location = weighted_value_ranking(user_behaviors, "location", top_n=1)
 
         rows.append(
             {
@@ -286,7 +274,6 @@ def build_user_profile_table(
                 "short_term_tags": join_tags(short_term_tags),
                 "preferred_boards": join_tags(preferred_boards),
                 "active_time_period": active_time_period[0] if active_time_period else "未知",
-                "preferred_location": preferred_location[0] if preferred_location else getattr(user, "default_location", "教学区"),
                 "learning_interest_weight": interest_weights["learning"],
                 "life_interest_weight": interest_weights["life"],
                 "social_interest_weight": interest_weights["social"],
@@ -349,13 +336,6 @@ def build_user_profiles(
         short_term_tags = split_tags(row.get("short_term_tags", ""))
         profiles[user_id] = UserProfile(
             user_id=user_id,
-            grade=str(getattr(user, "grade", "")),
-            college=str(getattr(user, "college", "")),
-            major=str(getattr(user, "major", "")),
-            campus=str(getattr(user, "campus", "")),
-            interest_tags=set(split_tags(getattr(user, "interest_tags", ""))) | set(long_term_tags) | set(short_term_tags),
-            preferred_location=str(row.get("preferred_location", getattr(user, "default_location", "教学区"))),
-            is_new_user=int(getattr(user, "is_new_user", 0)),
             long_term_tags=long_term_tags,
             short_term_tags=short_term_tags,
             preferred_boards=split_tags(row.get("preferred_boards", "")),

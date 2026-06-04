@@ -19,13 +19,12 @@ from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
 from src.preprocess import get_time_period, preprocess_all
 from src.ranker import FeatureEncoder, load_encoder, load_model, rank_candidates
-from src.recall.cold_start_recall import cold_start_recall
 from src.recall.content_recall import content_recall
 from src.recall.hot_recall import hot_recall
 from src.recall.itemcf_recall import build_item_similarity, build_positive_interactions, itemcf_recall
 from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
-from src.recall.scene_recall import location_scene_recall, time_scene_recall
+from src.recall.scene_recall import time_scene_recall
 from src.rerank import rerank_candidates
 from src.user_profile import build_user_profile_table
 
@@ -52,8 +51,6 @@ REASON_MAP = {
     "itemcf": "和你兴趣相似的用户也浏览过该帖子。",
     "profile": "该帖子与你的兴趣标签或常看板块相关。",
     "time_scene": "该帖子适合你当前的浏览时间段。",
-    "location_scene": "该帖子与你当前所在校园场景相关。",
-    "cold_start": "根据新用户默认策略或问卷兴趣推荐。",
 }
 
 
@@ -150,25 +147,8 @@ class CampusRecommendService:
         return rows.iloc[0]
 
     def _build_recall_results(self, user_id: str, recall_top_k: int) -> list[pd.DataFrame]:
-        user = self._find_user(user_id)
-        location = str(user.get("default_location", "教学区"))
-        time_period = "晚上"
-        scene = "普通浏览"
-        is_new_user = int(user.get("is_new_user", 0) or 0) == 1
-
-        if is_new_user:
-            return [
-                cold_start_recall(
-                    user_id=user_id,
-                    users=self.result.users,
-                    questionnaire=self.result.questionnaire,
-                    posts=self.result.posts,
-                    post_stats=self.result.post_stats,
-                    top_k=recall_top_k,
-                    time_period=time_period,
-                    scene=scene,
-                )
-            ]
+        self._find_user(user_id)
+        time_period = get_time_period(pd.Timestamp.now())
 
         return [
             hot_recall(user_id, self.result.posts, self.result.post_stats, top_k=recall_top_k),
@@ -196,8 +176,7 @@ class CampusRecommendService:
                 self.result.post_tags,
                 top_k=recall_top_k,
             ),
-            time_scene_recall(user_id, self.result.posts, time_period=time_period, scene=scene, top_k=recall_top_k),
-            location_scene_recall(user_id, self.result.posts, location=location, top_k=recall_top_k),
+            time_scene_recall(user_id, self.result.posts, time_period=time_period, top_k=recall_top_k),
         ]
 
     def _rank_candidates(self, candidates: pd.DataFrame, log_score_stats: bool = False) -> pd.DataFrame:
@@ -393,15 +372,13 @@ class CampusRecommendService:
         profile = profile_rows.iloc[0] if not profile_rows.empty else pd.Series(dtype=object)
         data = {
             "user_id": user.get("user_id"),
-            "grade": user.get("grade"),
-            "college": user.get("college"),
-            "major": user.get("major"),
-            "interest_tags": user.get("interest_tags"),
+            "nickname": user.get("nickname"),
+            "headimgurl_hash": user.get("headimgurl_hash"),
+            "is_forbid": user.get("is_forbid"),
             "long_term_tags": profile.get("long_term_tags", ""),
             "short_term_tags": profile.get("short_term_tags", ""),
             "preferred_boards": profile.get("preferred_boards", ""),
             "active_time_period": profile.get("active_time_period", ""),
-            "preferred_location": profile.get("preferred_location", user.get("default_location", "")),
             "learning_interest_weight": profile.get("learning_interest_weight", 0.0),
             "life_interest_weight": profile.get("life_interest_weight", 0.0),
             "social_interest_weight": profile.get("social_interest_weight", 0.0),
@@ -464,9 +441,6 @@ class CampusRecommendService:
             "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "dwell_time": dwell,
             "time_period": context.get("time_period") or get_time_period(timestamp),
-            "location": context.get("location") or self._find_user(user_id).get("default_location", "教学区"),
-            "device_type": context.get("device_type", "mobile"),
-            "scene": context.get("scene", "普通浏览"),
             "is_positive": is_positive,
             "source": "sqlite",
         }

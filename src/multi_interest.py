@@ -141,41 +141,6 @@ def build_direction_vector(
     return vector, normalizer
 
 
-def initialize_from_questionnaire_or_tags(
-    user: pd.Series,
-    posts: pd.DataFrame,
-    post_text_matrix: sparse.csr_matrix,
-    post_id_to_index: dict[str, int],
-    vector_dim: int,
-) -> tuple[dict[str, sparse.csr_matrix], dict[str, float]]:
-    """Initialize cold users by matching their interest tags with posts."""
-
-    user_tags = set(split_tags(user.get("interest_tags", "")))
-    vectors = zero_direction_vectors(vector_dim)
-    weights = {direction: 0.0 for direction in DIRECTION_ORDER}
-    if not user_tags:
-        return vectors, weights
-
-    candidate_posts = posts[posts["tags"].apply(lambda value: bool(user_tags & set(split_tags(value))))]
-    for direction in DIRECTION_ORDER:
-        direction_posts = candidate_posts[
-            candidate_posts.apply(
-                lambda row: infer_interest_direction(row.get("board", ""), row.get("tags", ""), row.get("topic_type", "")) == direction,
-                axis=1,
-            )
-        ].head(20)
-        post_vectors = [
-            post_text_matrix[post_id_to_index[str(row.post_id)]]
-            for row in direction_posts.itertuples(index=False)
-            if str(row.post_id) in post_id_to_index
-        ]
-        if post_vectors:
-            vectors[direction] = sparse.vstack(post_vectors).mean(axis=0)
-            vectors[direction] = sparse.csr_matrix(vectors[direction])
-            weights[direction] = float(len(post_vectors))
-    return vectors, weights
-
-
 def build_multi_interest_representations(
     users: pd.DataFrame,
     posts: pd.DataFrame,
@@ -200,15 +165,7 @@ def build_multi_interest_representations(
         vectors = zero_direction_vectors(vector_dim)
         weights = {direction: 0.0 for direction in DIRECTION_ORDER}
 
-        if user_rows.empty:
-            vectors, weights = initialize_from_questionnaire_or_tags(
-                pd.Series(user._asdict()),
-                posts,
-                post_text_matrix,
-                post_id_to_index,
-                vector_dim,
-            )
-        else:
+        if not user_rows.empty:
             for direction in DIRECTION_ORDER:
                 direction_rows = user_rows[user_rows["interest_direction"].eq(direction)]
                 vectors[direction], weights[direction] = build_direction_vector(

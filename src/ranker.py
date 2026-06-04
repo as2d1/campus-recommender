@@ -25,17 +25,10 @@ except ModuleNotFoundError:  # pragma: no cover - environment guard.
 SPARSE_FEATURES = [
     "user_id",
     "post_id",
-    "grade",
-    "college",
-    "major",
-    "campus",
     "board",
     "tags",
     "topic_type",
     "time_period",
-    "location",
-    "location_scope",
-    "device_type",
     "recall_sources",
 ]
 
@@ -47,7 +40,6 @@ DENSE_FEATURES = [
     "itemcf_score",
     "profile_match_score",
     "time_scene_score",
-    "location_scene_score",
     "multi_interest_score",
     "source_count",
     "post_age_hours",
@@ -285,7 +277,7 @@ def merge_candidate_features(
 
     data = candidate_df.copy()
     if users_df is not None and not users_df.empty:
-        user_columns = [column for column in ["user_id", "grade", "college", "major", "campus"] if column in users_df.columns]
+        user_columns = [column for column in ["user_id"] if column in users_df.columns]
         data = data.merge(users_df[user_columns].drop_duplicates("user_id"), on="user_id", how="left", suffixes=("", "_user"))
     if posts_df is not None and not posts_df.empty:
         post_columns = [
@@ -295,7 +287,6 @@ def merge_candidate_features(
                 "board",
                 "tags",
                 "topic_type",
-                "location_scope",
                 "post_age_hours",
                 "content_length",
                 "img_count",
@@ -305,7 +296,7 @@ def merge_candidate_features(
             if column in posts_df.columns
         ]
         data = data.merge(posts_df[post_columns].drop_duplicates("post_id"), on="post_id", how="left", suffixes=("", "_post"))
-        for column in ["board", "tags", "topic_type", "location_scope", "post_age_hours", "content_length", "img_count", "has_image", "has_contact_info"]:
+        for column in ["board", "tags", "topic_type", "post_age_hours", "content_length", "img_count", "has_image", "has_contact_info"]:
             post_column = f"{column}_post"
             if post_column in data.columns:
                 data[column] = data[column].where(data[column].notna(), data[post_column]) if column in data.columns else data[post_column]
@@ -337,7 +328,6 @@ def merge_candidate_features(
             column
             for column in [
                 "user_id",
-                "preferred_location",
                 "learning_interest_weight",
                 "life_interest_weight",
                 "social_interest_weight",

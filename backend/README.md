@@ -67,7 +67,7 @@ curl "http://127.0.0.1:8000/api/tags"
 Record behavior, PowerShell one-line:
 
 ```powershell
-curl -X POST "http://127.0.0.1:8000/api/behavior" -H "Content-Type: application/json" -d "{\"user_id\":\"u_0001\",\"post_id\":\"p_ext_000001\",\"action_type\":\"view\",\"dwell_time\":20,\"context\":{\"time_period\":\"晚上\",\"location\":\"宿舍区\",\"device_type\":\"pc\",\"scene\":\"平时\"}}"
+curl -X POST "http://127.0.0.1:8000/api/behavior" -H "Content-Type: application/json" -d "{\"user_id\":\"demo_user_A\",\"post_id\":\"2101899312\",\"action_type\":\"view\",\"dwell_time\":20,\"context\":{\"time_period\":\"晚上\"}}"
 ```
 
 Refresh user profile:

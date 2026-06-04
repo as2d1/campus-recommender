@@ -133,10 +133,7 @@ async function sendAction(actionType) {
       action_type: actionType,
       dwell_time: actionType === 'skip' ? 2 : 20,
       context: {
-        time_period: '晚上',
-        location: '宿舍区',
-        device_type: 'pc',
-        scene: '平时'
+        time_period: '晚上'
       }
     })
     toast.value = actionType === 'like' ? '已点赞，行为已写入画像' : actionType === 'collect' ? '已收藏' : '已跳过'

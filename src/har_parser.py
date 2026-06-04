@@ -15,7 +15,6 @@ STANDARD_TABLES = [
     "tags",
     "post_tags",
     "user_behaviors",
-    "questionnaire",
 ]
 
 

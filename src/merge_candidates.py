@@ -28,8 +28,6 @@ DEFAULT_RECALL_WEIGHTS = {
     "itemcf": 1.0,
     "profile": 0.9,
     "time_scene": 0.7,
-    "location_scene": 0.7,
-    "cold_start": 0.8,
 }
 
 

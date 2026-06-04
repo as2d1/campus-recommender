@@ -12,9 +12,6 @@ def update_user_profile_with_new_behavior(
     timestamp: str | None = None,
     dwell_time: int = 0,
     time_period: str | None = None,
-    location: str = "教学区",
-    device_type: str = "mobile",
-    scene: str = "普通浏览",
 ):
     """Persist a behavior event to USER_EVENTS and return the refreshed profile."""
 
@@ -26,10 +23,6 @@ def update_user_profile_with_new_behavior(
         dwell_time=dwell_time,
         context={
             "time_period": time_period,
-            "location": location,
-            "device_type": device_type,
-            "scene": scene,
         },
     )
     return service.get_user_profile(user_id)
-

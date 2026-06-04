@@ -36,7 +36,6 @@ class CampusData:
     tags: pd.DataFrame
     post_tags: pd.DataFrame
     behaviors: pd.DataFrame
-    questionnaire: pd.DataFrame
     user_profiles: pd.DataFrame
 
 
@@ -67,18 +66,7 @@ def _build_tags(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def _adapt_users(users: pd.DataFrame) -> pd.DataFrame:
     adapted = users.copy()
-    adapted["register_time"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     adapted["status"] = adapted["is_forbid"].fillna(0).astype(int).map(lambda value: "blocked" if value else "normal")
-    adapted["grade"] = "未知年级"
-    adapted["college"] = "未知学院"
-    adapted["major"] = "未知专业"
-    adapted["campus"] = "中山大学"
-    adapted["interest_tags"] = ""
-    adapted["is_new_user"] = 0
-    adapted["questionnaire_filled"] = 0
-    adapted["default_location"] = "教学区"
-    adapted["user_level"] = 1
-    adapted["user_level_title"] = "普通用户"
     return adapted
 
 
@@ -108,7 +96,6 @@ def _adapt_posts(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     filtered["publish_time"] = _parse_zanao_time(filtered["p_time"], filtered.get("pt_time"))
     filtered["tags"] = filtered["board"] + "|" + filtered["topic_type"]
     filtered["has_image"] = (pd.to_numeric(filtered["img_count"], errors="coerce").fillna(0) > 0).astype(int)
-    filtered["location_scope"] = "全校"
     filtered["price"] = 0
     filtered["need_pay"] = 0
     filtered["has_contact_info"] = 0
@@ -155,9 +142,6 @@ def _adapt_behaviors(events: pd.DataFrame) -> pd.DataFrame:
                 "timestamp",
                 "dwell_time",
                 "time_period",
-                "location",
-                "device_type",
-                "scene",
                 "source",
             ]
         )
@@ -173,9 +157,6 @@ def _adapt_behaviors(events: pd.DataFrame) -> pd.DataFrame:
     adapted["timestamp"] = _parse_zanao_time(adapted["timestamp"])
     adapted["dwell_time"] = (pd.to_numeric(adapted["duration_ms"], errors="coerce").fillna(0) / 1000).round().astype(int)
     adapted["time_period"] = ""
-    adapted["location"] = "教学区"
-    adapted["device_type"] = "unknown"
-    adapted["scene"] = "真实行为"
     adapted["source"] = "sqlite"
     return adapted
 
@@ -205,6 +186,5 @@ def load_all_data(sqlite_path: str | Path = DEFAULT_SQLITE_PATH) -> CampusData:
         tags=tags,
         post_tags=post_tags,
         behaviors=behaviors,
-        questionnaire=pd.DataFrame(columns=["user_id", "filled_time", "selected_tags", "selected_boards"]),
         user_profiles=pd.DataFrame(),
     )

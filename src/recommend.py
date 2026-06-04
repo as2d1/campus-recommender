@@ -9,15 +9,14 @@ import pandas as pd
 from src.data_loader import load_all_data
 from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
-from src.preprocess import preprocess_all
+from src.preprocess import get_time_period, preprocess_all
 from src.ranker import load_encoder, load_model, rank_candidates
-from src.recall.cold_start_recall import cold_start_recall
 from src.recall.content_recall import content_recall
 from src.recall.hot_recall import hot_recall
 from src.recall.itemcf_recall import build_item_similarity, build_positive_interactions, itemcf_recall
 from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
-from src.recall.scene_recall import location_scene_recall, time_scene_recall
+from src.recall.scene_recall import time_scene_recall
 from src.rerank import rerank_candidates
 from src.train import ENCODER_PATH, MODEL_PATH
 from src.user_profile import build_user_profile_table
@@ -30,8 +29,6 @@ REASON_MAP = {
     "itemcf": "和你兴趣相似的用户也浏览过该帖子。",
     "profile": "该帖子与你的兴趣标签或常看板块相关。",
     "time_scene": "该帖子适合你当前的浏览时间段。",
-    "location_scene": "该帖子与你当前所在校园场景相关。",
-    "cold_start": "根据新用户问卷或热门内容为你推荐。",
 }
 
 
@@ -49,10 +46,7 @@ def build_recall_results(user_id: str, result, text_bundle, user_profiles: pd.Da
     user_rows = result.users[result.users["user_id"].astype(str).eq(str(user_id))]
     if user_rows.empty:
         raise ValueError(f"user_id not found: {user_id}")
-    user = user_rows.iloc[0]
-    location = str(user.get("default_location", "教学区"))
-    time_period = "晚上"
-    scene = "普通浏览"
+    time_period = get_time_period(pd.Timestamp.now())
 
     positive = build_positive_interactions(result.behaviors)
     item_similarity = build_item_similarity(positive)
@@ -69,18 +63,7 @@ def build_recall_results(user_id: str, result, text_bundle, user_profiles: pd.Da
         ),
         itemcf_recall(user_id, result.behaviors, result.posts, top_k=recall_top_k, item_similarity=item_similarity),
         profile_recall(user_id, result.users, result.posts, user_profiles, result.post_tags, top_k=recall_top_k),
-        time_scene_recall(user_id, result.posts, time_period=time_period, scene=scene, top_k=recall_top_k),
-        location_scene_recall(user_id, result.posts, location=location, top_k=recall_top_k),
-        cold_start_recall(
-            user_id,
-            result.users,
-            result.questionnaire,
-            result.posts,
-            result.post_stats,
-            top_k=recall_top_k,
-            time_period=time_period,
-            scene=scene,
-        ),
+        time_scene_recall(user_id, result.posts, time_period=time_period, top_k=recall_top_k),
     ]
 
 

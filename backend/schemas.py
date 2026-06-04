@@ -11,9 +11,6 @@ class BehaviorContext(BaseModel):
     """Optional behavior context sent by the frontend."""
 
     time_period: Optional[str] = None
-    location: Optional[str] = None
-    device_type: Optional[str] = None
-    scene: Optional[str] = None
 
 
 class BehaviorRequest(BaseModel):
