@@ -18,7 +18,7 @@ def grade_bonus(grade: str, post: pd.Series) -> float:
     if grade == "大三":
         return 0.30 if any(key in text for key in ["考研", "实习", "竞赛", "保研"]) else 0.0
     if grade == "大四":
-        return 0.30 if any(key in text for key in ["毕业", "就业", "租房", "二手交易"]) else 0.0
+        return 0.30 if any(key in text for key in ["毕业", "就业", "租房", "二手闲置"]) else 0.0
     if str(grade).startswith("研"):
         return 0.30 if any(key in text for key in ["科研", "实习", "招聘", "租房"]) else 0.0
     return 0.0
@@ -29,7 +29,7 @@ def major_bonus(college: str, major: str, post: pd.Series) -> float:
     if "计算机" in college or major in {"软件工程", "人工智能", "数据科学", "网络工程"}:
         return 0.20 if any(key in text for key in ["408", "竞赛", "科研", "课程资料", "实习"]) else 0.0
     if "管理" in college:
-        return 0.15 if any(key in text for key in ["就业", "简历", "兼职", "社团", "二手交易"]) else 0.0
+        return 0.15 if any(key in text for key in ["就业", "简历", "兼职", "招聘", "二手闲置"]) else 0.0
     if "公共卫生" in college or "医学" in major:
         return 0.15 if any(key in text for key in ["科研", "考研", "考试", "课程资料"]) else 0.0
     return 0.0
@@ -59,6 +59,7 @@ def profile_recall(
     preferred_boards = set(split_tags(profile.get("preferred_boards", "")))
 
     candidates = filter_valid_posts(posts).copy()
+    board_sizes = candidates.groupby("board").size().to_dict()
     scores = []
     for _, post in candidates.iterrows():
         post_tag_set = set(split_tags(post.get("tags", "")))
@@ -66,7 +67,10 @@ def profile_recall(
             extra_tags = post_tags[post_tags["post_id"].astype(str).eq(str(post["post_id"]))]["tag_name"].astype(str)
             post_tag_set |= set(extra_tags)
         tag_score = len(interest_tags & post_tag_set) / max(len(interest_tags | post_tag_set), 1)
-        board_score = 0.35 if str(post.get("board", "")) in preferred_boards else 0.0
+        board = str(post.get("board", ""))
+        board_score = 0.35 if board in preferred_boards else 0.0
+        if board in preferred_boards and board_sizes.get(board, 0) <= 10:
+            board_score += 1.2
         score = (
             tag_score * 1.2
             + board_score

@@ -1,6 +1,6 @@
 """User profile construction for the campus forum recommender.
 
-This module builds ``user_profiles.csv`` from normalized users, posts, and
+This module builds in-memory user profiles from normalized users, posts, and
 user behavior logs. It focuses on interpretable profile features that can be
 reused by recall, ranking, and later online profile updates.
 """
@@ -8,7 +8,6 @@ reused by recall, ranking, and later online profile updates.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -49,26 +48,26 @@ PROFILE_COLUMNS = [
 INTEREST_DIRECTIONS = {
     "learning": {
         "topic_types": {"学习"},
-        "boards": {"学习交流", "考研保研", "课程评价", "竞赛科研"},
+        "boards": set(),
         "tags": {"课程资料", "考试", "考研", "保研", "学习经验", "408", "复习资料", "课程评价", "选课"},
         "profile_column": "learning_interest_weight",
     },
     "life": {
         "topic_types": {"生活"},
-        "boards": {"二手交易", "食堂生活", "问答求助", "失物招领"},
-        "tags": {"租房", "宿舍", "食堂", "拼饭", "二手交易", "校园生活", "教材", "闲置"},
+        "boards": {"打听求助", "二手闲置"},
+        "tags": {"租房", "宿舍", "食堂", "拼饭", "二手闲置", "校园生活", "教材", "闲置", "求问"},
         "profile_column": "life_interest_weight",
     },
     "social": {
         "topic_types": {"社交"},
-        "boards": {"恋爱交友", "校园生活", "社团活动"},
+        "boards": {"恋爱交友", "校园趣事"},
         "tags": {"交友", "校园趣事", "活动", "社团", "招新", "志愿服务", "校园墙"},
         "profile_column": "social_interest_weight",
     },
     "career": {
         "topic_types": {"发展"},
-        "boards": {"兼职实习", "实习就业", "竞赛科研"},
-        "tags": {"实习", "就业", "兼职", "科研项目", "竞赛", "简历", "面试", "校招"},
+        "boards": {"兼职招聘", "校园招聘"},
+        "tags": {"实习", "就业", "兼职", "招聘", "简历", "面试", "校招"},
         "profile_column": "career_interest_weight",
     },
 }
@@ -242,7 +241,7 @@ def build_user_profile_table(
     recent_days: int = 7,
     recent_n: int = 30,
 ) -> pd.DataFrame:
-    """Build the dataframe that should be saved as ``user_profiles.csv``."""
+    """Build the user profile dataframe used by recall and ranking."""
 
     if now is None:
         now = pd.Timestamp.now()
@@ -299,14 +298,6 @@ def build_user_profile_table(
         )
 
     return pd.DataFrame(rows, columns=PROFILE_COLUMNS)
-
-
-def save_user_profiles(profile_df: pd.DataFrame, output_path: str | Path) -> None:
-    """Save user profile table as UTF-8-SIG CSV."""
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 
 def build_user_profiles(

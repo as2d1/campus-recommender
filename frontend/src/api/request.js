@@ -3,7 +3,7 @@ import axios from 'axios'
 export const API_BASE_URL = 'http://127.0.0.1:8000'
 export const DEFAULT_USER_ID =
   localStorage.getItem('campus_user_id') ||
-  'dzQ5OWFZU1Rsb0NBdU5DMGlxR3dpSVMzYXJHR2VZZHBsNHVoYllWK3RjNnprSDJ4aWMzSWE1S21ycmlHaTd1bWZKS0FqNFoyb29lSWlXSjI='
+  'demo_user_A'
 
 const client = axios.create({
   baseURL: API_BASE_URL,

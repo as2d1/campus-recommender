@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from pathlib import Path
 
 
 def configure_console_encoding() -> None:
@@ -17,24 +15,14 @@ def configure_console_encoding() -> None:
 
 configure_console_encoding()
 
-from src.data_loader import DATA_DIR, load_all_data
+from src.data_loader import load_all_data
 from src.evaluate import evaluate_offline
-from src.feature_engineering import build_training_features, fit_post_text_vectors, save_training_samples
+from src.feature_engineering import build_training_features, fit_post_text_vectors
 from src.multi_interest import build_multi_interest_representations, calculate_multi_interest_score
 from src.preprocess import preprocess_all
 from src.recommend import recommend_for_user
-from src.train import ENCODER_PATH, MODEL_PATH, TRAINING_SAMPLES_PATH, train_pipeline
-from src.user_profile import build_user_profile_table, build_user_profiles, save_user_profiles
-
-
-def ensure_mock_data() -> None:
-    """Generate mock data when required CSV files do not exist."""
-
-    required = ["users.csv", "posts.csv", "post_stats.csv", "user_behaviors.csv", "questionnaire.csv"]
-    if all((DATA_DIR / name).exists() for name in required):
-        return
-    print("Mock data not found. Generating mock data...")
-    subprocess.run([sys.executable, "scripts/mock_data.py"], check=True)
+from src.train import ENCODER_PATH, MODEL_PATH, train_pipeline
+from src.user_profile import build_user_profile_table, build_user_profiles
 
 
 def prepare_features_and_profiles() -> tuple:
@@ -44,7 +32,6 @@ def prepare_features_and_profiles() -> tuple:
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
     profile_table = build_user_profile_table(result.users, result.posts, result.behaviors)
-    save_user_profiles(profile_table, DATA_DIR / "user_profiles.csv")
 
     multi_bundle = build_multi_interest_representations(
         users=result.users,
@@ -70,8 +57,6 @@ def prepare_features_and_profiles() -> tuple:
         profiles=profiles,
         text_bundle=text_bundle,
     )
-    save_training_samples(training_features, str(TRAINING_SAMPLES_PATH))
-
     sample_user_id = str(result.users.iloc[0]["user_id"])
     sample_post_id = str(result.posts.iloc[0]["post_id"])
     sample_score = calculate_multi_interest_score(multi_bundle, sample_user_id, sample_post_id)
@@ -85,11 +70,10 @@ def prepare_features_and_profiles() -> tuple:
 
 
 def main() -> None:
-    ensure_mock_data()
     result, _ = prepare_features_and_profiles()
 
     print("\nTraining DeepFM...")
-    _, _, logs = train_pipeline(epoch=3, batch_size=512, learning_rate=1e-3)
+    _, _, logs = train_pipeline(epoch=10, batch_size=128, learning_rate=5e-3)
     print(f"training logs: {logs}")
     print(f"model path: {MODEL_PATH}")
     print(f"encoder path: {ENCODER_PATH}")

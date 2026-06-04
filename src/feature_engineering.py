@@ -15,7 +15,6 @@ try:
 except ImportError:  # pragma: no cover
     jieba = None
 
-from src.data_loader import save_dataframe
 from src.user_profile import UserProfile, get_time_period, split_tags
 
 
@@ -185,7 +184,7 @@ def is_major_related(row: pd.Series) -> int:
     if "计算机" in college or major in {"软件工程", "人工智能", "数据科学", "网络工程"}:
         return int(any(keyword in text for keyword in ["408", "竞赛", "科研", "课程资料", "实习"]))
     if "管理" in college:
-        return int(any(keyword in text for keyword in ["就业", "简历", "二手交易", "兼职", "社团"]))
+        return int(any(keyword in text for keyword in ["就业", "简历", "二手闲置", "兼职", "招聘"]))
     if "公共卫生" in college or "医学" in major:
         return int(any(keyword in text for keyword in ["考研", "科研", "考试", "课程资料", "实习"]))
     return int(any(keyword in text for keyword in ["活动", "交友", "学习经验", "社团"]))
@@ -216,11 +215,11 @@ def time_scene_score(row: pd.Series) -> float:
     scene = str(row.get("scene", ""))
     semester = get_semester_phase(pd.Timestamp(row.get("timestamp", pd.Timestamp.now())))
     score = 0.0
-    if period == "中午" and (board == "食堂生活" or {"食堂", "拼饭"} & tags):
+    if period == "中午" and (board in {"校园趣事", "打听求助"} or {"食堂", "拼饭"} & tags):
         score += 0.35
-    if period == "晚上" and (board in {"学习交流", "考研保研", "课程评价"} or {"课程资料", "考研"} & tags):
+    if period == "晚上" and (board in {"打听求助", "恋爱交友", "校园趣事"} or {"课程资料", "考研"} & tags):
         score += 0.25
-    if semester == "考试周" and (board in {"学习交流", "考研保研", "课程评价"} or {"考试", "复习资料"} & tags):
+    if semester == "考试周" and (board == "打听求助" or {"考试", "复习资料"} & tags):
         score += 0.35
     if scene == "开学季" and ({"社团", "招新", "新生攻略"} & tags):
         score += 0.25
@@ -344,7 +343,3 @@ def build_ranking_features(*args, **kwargs) -> pd.DataFrame:
     """Backward-compatible alias for the previous step."""
 
     return build_training_features(*args, **kwargs)
-
-
-def save_training_samples(training_samples: pd.DataFrame, output_path: str) -> None:
-    save_dataframe(training_samples[TRAINING_SAMPLE_COLUMNS], output_path)

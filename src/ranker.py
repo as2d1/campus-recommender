@@ -201,17 +201,6 @@ def ensure_torch_available() -> None:
         )
 
 
-def load_training_samples(training_samples_path: str | Path) -> pd.DataFrame:
-    """Load training_samples.csv."""
-
-    samples = pd.read_csv(training_samples_path, encoding="utf-8-sig")
-    protected_columns = {"label"}
-    leakage = [column for column in LEAKAGE_COLUMNS if column in samples.columns and column not in protected_columns]
-    if leakage:
-        samples = samples.drop(columns=leakage)
-    return samples
-
-
 def build_training_dataloader(
     samples: pd.DataFrame,
     encoder: FeatureEncoder,
@@ -227,7 +216,7 @@ def build_training_dataloader(
 
 
 def train_deepfm_model(
-    training_samples_path: str | Path,
+    training_samples: pd.DataFrame,
     epoch: int = 3,
     batch_size: int = 128,
     learning_rate: float = 1e-3,
@@ -239,9 +228,9 @@ def train_deepfm_model(
     """Train a simplified DeepFM model."""
 
     ensure_torch_available()
-    samples = load_training_samples(training_samples_path)
+    samples = training_samples.copy()
     if "label" not in samples.columns:
-        raise ValueError("training_samples.csv must contain a label column.")
+        raise ValueError("training samples must contain a label column.")
     encoder = FeatureEncoder()
     encoder.fit(samples)
     dataloader = build_training_dataloader(samples, encoder, batch_size=batch_size, shuffle=True)

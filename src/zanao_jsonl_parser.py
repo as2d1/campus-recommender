@@ -66,7 +66,7 @@ def parse_time(value: Any) -> pd.Timestamp:
 
 
 def map_category(cate_name: Any) -> tuple[str, str]:
-    return BOARD_TOPIC_MAP.get(str(cate_name), ("校园生活", "社交"))
+    return BOARD_TOPIC_MAP.get(str(cate_name), ("校园趣事", "社交"))
 
 
 def infer_status(detail: dict[str, Any], list_item: dict[str, Any]) -> str:
@@ -96,7 +96,7 @@ def extract_seed_tags(board: str, title: str, content: str) -> list[str]:
         "图书馆": "图书馆",
         "课程": "课程资料",
         "搭子": "搭子",
-        "二手": "二手交易",
+        "二手": "二手闲置",
         "求问": "求问",
         "考研": "考研",
         "实习": "实习",
@@ -105,7 +105,7 @@ def extract_seed_tags(board: str, title: str, content: str) -> list[str]:
     for keyword, tag in keyword_rules.items():
         if keyword in text and tag not in tags:
             tags.append(tag)
-    return tags[:5] or ["校园生活"]
+    return tags[:5] or ["校园趣事"]
 
 
 def parse_comments(comment_list: list[dict[str, Any]], post_id: str, author_id: str) -> list[dict[str, Any]]:

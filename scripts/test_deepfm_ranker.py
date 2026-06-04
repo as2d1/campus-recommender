@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data_loader import DATA_DIR, load_all_data
+from src.data_loader import load_all_data
 from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
 from src.preprocess import preprocess_all
@@ -21,6 +21,7 @@ from src.recall.itemcf_recall import build_item_similarity, build_positive_inter
 from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
 from src.user_profile import build_user_profile_table
+from src.train import build_current_training_samples
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,10 +35,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    training_path = Path(DATA_DIR) / "training_samples.csv"
     try:
         model, encoder, logs = train_deepfm_model(
-            training_samples_path=training_path,
+            training_samples=build_current_training_samples(),
             epoch=args.epochs,
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,

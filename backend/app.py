@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.core.settings import APP_NAME, CORS_ORIGINS, DATA_DIR, MODEL_DIR
+from backend.core.settings import APP_NAME, CORS_ORIGINS, MODEL_DIR, SQLITE_PATH
 from backend.schemas import fail, ok
 from src.service import CampusRecommendService
 
@@ -40,7 +40,7 @@ def initialize_service() -> tuple[CampusRecommendService | None, str | None]:
     """Initialize the algorithm service without crashing the backend process."""
 
     try:
-        service = CampusRecommendService(data_dir=DATA_DIR, model_dir=MODEL_DIR)
+        service = CampusRecommendService(sqlite_path=SQLITE_PATH, model_dir=MODEL_DIR)
         return service, service.model_warning
     except Exception as exc:
         return None, f"CampusRecommendService initialization failed: {exc}"

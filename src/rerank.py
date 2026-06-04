@@ -81,6 +81,28 @@ def freshness_bonus(row: pd.Series) -> float:
     return freshness
 
 
+def profile_preference_bonus(row: pd.Series, profile: pd.Series) -> float:
+    """Boost posts from boards and tags the user repeatedly engaged with."""
+
+    if profile.empty:
+        return 0.0
+    board = str(row.get("board", ""))
+    post_tags = set(split_tags(row.get("tags", "")))
+    preferred_boards = split_tags(profile.get("preferred_boards", ""))
+    long_tags = set(split_tags(profile.get("long_term_tags", "")))
+    short_tags = set(split_tags(profile.get("short_term_tags", "")))
+
+    bonus = 0.0
+    if board in preferred_boards:
+        rank = preferred_boards.index(board)
+        bonus += max(1.8 - rank * 0.25, 1.0)
+    if post_tags & long_tags:
+        bonus += 0.18
+    if post_tags & short_tags:
+        bonus += 0.22
+    return bonus
+
+
 def base_score_column(candidates: pd.DataFrame) -> str:
     """Use rank_score if present, otherwise merged_recall_score."""
 
@@ -114,11 +136,13 @@ def apply_score_adjustments(
 
     scored["novelty_bonus"] = scored["post_id"].map(novelty_map).fillna(0.0)
     scored["freshness_bonus"] = scored.apply(freshness_bonus, axis=1)
+    scored["profile_preference_bonus"] = scored.apply(lambda row: profile_preference_bonus(row, profile), axis=1)
     scored["diversity_adjustment"] = 0.0
     scored["rerank_score"] = (
         scored["base_score"]
         + scored["novelty_bonus"]
         + scored["freshness_bonus"]
+        + scored["profile_preference_bonus"]
         + scored["diversity_adjustment"]
     )
     return scored.sort_values("rerank_score", ascending=False).reset_index(drop=True)
@@ -148,7 +172,7 @@ def violates_diversity(
 def diversity_select(
     scored: pd.DataFrame,
     top_n: int,
-    max_board_top10: int = 4,
+    max_board_top10: int = 6,
     max_consecutive_board: int = 2,
 ) -> pd.DataFrame:
     """Greedy diversity-aware selection."""
@@ -185,7 +209,7 @@ def rerank_candidates(
     top_n: int = 20,
     exclude_seen: bool = True,
     uninterested_tags: set[str] | None = None,
-    max_board_top10: int = 4,
+    max_board_top10: int = 6,
     max_consecutive_board: int = 2,
 ) -> pd.DataFrame:
     """Rerank candidates with filtering, novelty, freshness, and diversity."""

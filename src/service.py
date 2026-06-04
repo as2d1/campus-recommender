@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+import sqlite3
+import time
 from typing import Any
 
 import pandas as pd
 
-from src.data_loader import DATA_DIR, PROJECT_ROOT, CampusData, load_all_data, save_dataframe
+from src.data_loader import ALLOWED_BOARDS, DATA_DIR, DEFAULT_SQLITE_PATH, PROJECT_ROOT, CampusData, load_all_data
 from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
 from src.preprocess import get_time_period, preprocess_all
@@ -25,13 +27,11 @@ from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
 from src.recall.scene_recall import location_scene_recall, time_scene_recall
 from src.rerank import rerank_candidates
-from src.user_profile import build_user_profile_table, save_user_profiles
+from src.user_profile import build_user_profile_table
 
 
 MODEL_PATH = PROJECT_ROOT / "models" / "deepfm.pt"
 ENCODER_PATH = PROJECT_ROOT / "models" / "feature_encoder.json"
-BEHAVIOR_PATH = DATA_DIR / "user_behaviors.csv"
-PROFILE_PATH = DATA_DIR / "user_profiles.csv"
 
 ACTION_WEIGHTS = {
     "expose": 0,
@@ -40,6 +40,7 @@ ACTION_WEIGHTS = {
     "like": 2,
     "comment": 3,
     "collect": 4,
+    "favorite": 4,
     "dislike": -2,
     "report": -4,
 }
@@ -85,12 +86,15 @@ class CampusRecommendService:
 
     def __init__(
         self,
-        data_dir: str | Path = DATA_DIR,
+        data_dir: str | Path = DEFAULT_SQLITE_PATH,
+        sqlite_path: str | Path | None = None,
         model_path: str | Path | None = None,
         encoder_path: str | Path | None = None,
         model_dir: str | Path | None = None,
     ) -> None:
-        self.data_dir = Path(data_dir)
+        self.sqlite_path = Path(sqlite_path) if sqlite_path is not None else Path(data_dir)
+        if self.sqlite_path.is_dir():
+            self.sqlite_path = DEFAULT_SQLITE_PATH
         if model_dir is not None:
             model_root = Path(model_dir)
             self.model_path = Path(model_path) if model_path is not None else model_root / "deepfm.pt"
@@ -105,13 +109,12 @@ class CampusRecommendService:
         self.load_ranker()
 
     def reload_data(self) -> None:
-        """Reload CSV data and rebuild lightweight in-memory helper objects."""
+        """Reload SQLite data and rebuild lightweight in-memory helper objects."""
 
-        self.data: CampusData = load_all_data(self.data_dir)
+        self.data: CampusData = load_all_data(self.sqlite_path)
         self.result = preprocess_all(self.data)
         if self.result.user_profiles.empty:
             self.user_profiles = build_user_profile_table(self.result.users, self.result.posts, self.result.behaviors)
-            save_user_profiles(self.user_profiles, PROFILE_PATH)
         else:
             self.user_profiles = self.result.user_profiles.copy()
         self.text_bundle = fit_post_text_vectors(self.result.posts)
@@ -414,7 +417,7 @@ class CampusRecommendService:
         dwell_time: int | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Append one user behavior to ``user_behaviors.csv`` and memory cache."""
+        """Persist one user behavior to USER_EVENTS and refresh memory cache."""
 
         self._find_user(user_id)
         if self.result.posts[self.result.posts["post_id"].astype(str).eq(str(post_id))].empty:
@@ -432,8 +435,28 @@ class CampusRecommendService:
         else:
             is_positive = 0
 
+        event_type = "favorite" if action_type == "collect" else action_type
+        event_time = int(time.time())
+        with sqlite3.connect(self.sqlite_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO USER_EVENTS (visitor_id, thread_id, event_type, event_time, duration_ms, extra_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(user_id),
+                    str(post_id),
+                    event_type,
+                    event_time,
+                    dwell * 1000 if dwell else None,
+                    "{}",
+                ),
+            )
+            behavior_id = cursor.lastrowid
+            conn.commit()
+
         behavior = {
-            "behavior_id": f"b_srv_{int(timestamp.timestamp() * 1000)}_{len(self.result.behaviors)}",
+            "behavior_id": behavior_id,
             "user_id": str(user_id),
             "post_id": str(post_id),
             "action_type": action_type,
@@ -445,19 +468,16 @@ class CampusRecommendService:
             "device_type": context.get("device_type", "mobile"),
             "scene": context.get("scene", "普通浏览"),
             "is_positive": is_positive,
-            "source": context.get("source", "service"),
+            "source": "sqlite",
         }
-        behaviors = pd.concat([self.result.behaviors, pd.DataFrame([behavior])], ignore_index=True)
-        save_dataframe(behaviors, BEHAVIOR_PATH)
         self.reload_data()
         return {key: _clean_value(value) for key, value in behavior.items()}
 
     def refresh_user_profile(self, user_id: str) -> dict[str, Any]:
-        """Rebuild ``user_profiles.csv`` and return the refreshed user profile."""
+        """Rebuild in-memory user profiles and return the refreshed user profile."""
 
         self._find_user(user_id)
         self.user_profiles = build_user_profile_table(self.result.users, self.result.posts, self.result.behaviors)
-        save_user_profiles(self.user_profiles, PROFILE_PATH)
         self.reload_data()
         return self.get_user_profile(user_id)
 
@@ -488,12 +508,8 @@ class CampusRecommendService:
         posts = self.result.posts.copy()
         if "status" in posts.columns:
             posts = posts[posts["status"].fillna("normal").eq("normal")]
-        rows = (
-            posts.groupby("board", dropna=False)
-            .size()
-            .reset_index(name="post_count")
-            .sort_values("post_count", ascending=False)
-        )
+        counts = posts.groupby("board", dropna=False).size().to_dict()
+        rows = pd.DataFrame([{"board": board, "post_count": int(counts.get(board, 0))} for board in ALLOWED_BOARDS])
         return _records(rows)
 
     def get_tags(self, top_n: int = 50) -> list[dict[str, Any]]:

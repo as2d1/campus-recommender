@@ -53,7 +53,7 @@ import { createPost } from '../api/request'
 
 const router = useRouter()
 const message = ref('')
-const boards = ['问答求助', '二手交易', '校园生活', '恋爱交友', '学习交流', '考研保研', '课程评价', '食堂生活', '社团活动', '竞赛科研', '实习就业']
+const boards = ['打听求助', '恋爱交友', '校园趣事', '兼职招聘', '校园招聘', '二手闲置']
 const form = reactive({
   board: boards[0],
   title: '',
