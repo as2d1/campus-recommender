@@ -30,6 +30,20 @@ class PreferenceRequest(BaseModel):
     selected_tags: list[str] = Field(default_factory=list)
 
 
+class PostCreateRequest(BaseModel):
+    """Request body for creating one post."""
+
+    user_id: str = Field(default="demo_user_A", min_length=1)
+    board: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=2)
+    content: str = Field(..., min_length=5)
+    tags: str = ""
+    anonymous: bool = False
+    image_paths: list[str] = Field(default_factory=list)
+    image_urls: list[str] = Field(default_factory=list)
+    created_at: Optional[str] = None
+
+
 class ApiResponse(BaseModel):
     """Unified API response."""
 

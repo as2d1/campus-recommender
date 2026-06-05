@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 from backend.app import service_unavailable_response
-from backend.schemas import fail, ok
+from backend.schemas import PostCreateRequest, fail, ok
 
 
 router = APIRouter(prefix="/api", tags=["posts"])
@@ -55,3 +55,16 @@ def get_post_detail(post_id: str, request: Request) -> dict:
         return fail(str(exc))
     except Exception as exc:
         return fail(f"failed to get post detail: {exc}")
+
+
+@router.post("/posts")
+def create_post(payload: PostCreateRequest, request: Request) -> dict:
+    service = request.app.state.service
+    if service is None:
+        return service_unavailable_response(request.app.state.service_error)
+    try:
+        return ok(service.create_post(payload.dict()), "post created")
+    except ValueError as exc:
+        return fail(str(exc))
+    except Exception as exc:
+        return fail(f"failed to create post: {exc}")

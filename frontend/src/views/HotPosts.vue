@@ -5,7 +5,6 @@
         <h1>热门火文</h1>
         <p>校园里正在被围观的内容</p>
       </div>
-      <button class="ghost-btn" @click="loadHot">刷新</button>
     </header>
 
     <div class="tabs">

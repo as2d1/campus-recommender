@@ -16,7 +16,7 @@ import { computed } from 'vue'
 const props = defineProps({
   label: { type: String, required: true },
   value: { type: [Number, String], default: 0 },
-  color: { type: String, default: 'linear-gradient(90deg, #7c3aed, #6366f1)' }
+  color: { type: String, default: 'linear-gradient(90deg, #7aa08a, #8baac7)' }
 })
 
 const normalized = computed(() => Math.max(0, Math.min(1, Number(props.value || 0))))

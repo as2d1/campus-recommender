@@ -6,6 +6,7 @@ This module is intentionally framework-free.  A FastAPI backend can create one
 
 from __future__ import annotations
 
+from dataclasses import replace
 import warnings
 from pathlib import Path
 import json
@@ -13,9 +14,10 @@ import sqlite3
 import time
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from src.data_loader import DATA_DIR, DEFAULT_SQLITE_PATH, PROJECT_ROOT, CampusData, ensure_app_tables, load_all_data
+from src.data_loader import DATA_DIR, DEFAULT_SQLITE_PATH, IMAGE_CDN_BASE, IMAGE_CDN_SUFFIX, PROJECT_ROOT, CampusData, ensure_app_tables, load_all_data, normalize_image_url
 from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
 from src.preprocess import get_time_period, preprocess_all
@@ -27,7 +29,7 @@ from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
 from src.recall.scene_recall import time_scene_recall
 from src.rerank import rerank_candidates
-from src.taxonomy import ALLOWED_BOARDS, BOARD_TOPIC_MAP, taxonomy_payload
+from src.taxonomy import ALLOWED_BOARDS, BOARD_TOPIC_MAP, tags_for_post, taxonomy_payload
 from src.user_profile import build_user_profile_table
 
 
@@ -46,6 +48,11 @@ ACTION_WEIGHTS = {
     "report": -4,
 }
 
+CANCEL_ACTIONS = {
+    "unlike": ("like", "like"),
+    "uncollect": ("favorite", "collect"),
+}
+
 REASON_MAP = {
     "hot": "该帖子近期热度较高。",
     "latest": "该帖子发布时间较近，具有时效性。",
@@ -59,6 +66,10 @@ REASON_MAP = {
 def _clean_value(value: Any) -> Any:
     """Convert pandas/numpy values into JSON-friendly Python values."""
 
+    if isinstance(value, dict):
+        return {key: _clean_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean_value(item) for item in value]
     if pd.isna(value):
         return None
     if isinstance(value, pd.Timestamp):
@@ -78,6 +89,17 @@ def _ensure_columns(df: pd.DataFrame, defaults: dict[str, Any]) -> pd.DataFrame:
         if column not in data.columns:
             data[column] = value
     return data
+
+
+def _canonical_image_path(path: object) -> str:
+    text = str(path or "").strip()
+    if not text:
+        return ""
+    if text.startswith(IMAGE_CDN_BASE):
+        text = text.removeprefix(IMAGE_CDN_BASE)
+    if text.endswith(IMAGE_CDN_SUFFIX):
+        text = text[: -len(IMAGE_CDN_SUFFIX)]
+    return text.lstrip("/")
 
 
 class CampusRecommendService:
@@ -124,6 +146,112 @@ class CampusRecommendService:
         self.text_bundle = fit_post_text_vectors(self.result.posts)
         positive = build_positive_interactions(self.result.behaviors)
         self.item_similarity = build_item_similarity(positive) if not positive.empty else {}
+
+    def _append_behaviors(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        behaviors = pd.concat(
+            [self.result.behaviors, pd.DataFrame(records)],
+            ignore_index=True,
+        )
+        self.result = replace(self.result, behaviors=behaviors)
+
+    def _remove_behavior_from_memory(self, behavior_id: int | None, user_id: str, post_id: str, action_type: str) -> None:
+        behaviors = self.result.behaviors.copy()
+        if behaviors.empty:
+            return
+        mask = pd.Series(False, index=behaviors.index)
+        if behavior_id is not None and "behavior_id" in behaviors.columns:
+            mask = behaviors["behavior_id"].astype(str).eq(str(behavior_id))
+        if not mask.any():
+            mask = (
+                behaviors["user_id"].astype(str).eq(str(user_id))
+                & behaviors["post_id"].astype(str).eq(str(post_id))
+                & behaviors["action_type"].astype(str).eq(str(action_type))
+            )
+            if mask.any() and "timestamp" in behaviors.columns:
+                timestamps = pd.to_datetime(behaviors.loc[mask, "timestamp"], errors="coerce")
+                target_index = timestamps.idxmax() if timestamps.notna().any() else behaviors.loc[mask].index[-1]
+                mask = pd.Series(False, index=behaviors.index)
+                mask.loc[target_index] = True
+        if mask.any():
+            self.result = replace(self.result, behaviors=behaviors.loc[~mask].reset_index(drop=True))
+
+    def _delete_user_behavior(self, user_id: str, post_id: str, action_type: str) -> dict[str, Any]:
+        event_type, stored_action = CANCEL_ACTIONS[action_type]
+        with sqlite3.connect(self.sqlite_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM USER_EVENTS
+                WHERE visitor_id = ? AND thread_id = ? AND event_type = ?
+                ORDER BY event_time DESC, id DESC
+                LIMIT 1
+                """,
+                (str(user_id), str(post_id), event_type),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"No existing {stored_action} behavior to cancel")
+            behavior_id = int(row[0])
+            conn.execute("DELETE FROM USER_EVENTS WHERE id = ?", (behavior_id,))
+            conn.commit()
+
+        self._remove_behavior_from_memory(behavior_id, str(user_id), str(post_id), stored_action)
+        self._adjust_post_stat(str(post_id), action_type)
+        return {
+            "behavior_id": behavior_id,
+            "user_id": str(user_id),
+            "post_id": str(post_id),
+            "action_type": action_type,
+            "deleted_action_type": stored_action,
+            "deleted": True,
+            "source": "sqlite",
+        }
+
+    def _adjust_post_stat(self, post_id: str, action_type: str) -> None:
+        count_deltas = {
+            "like": ("like_count", 1),
+            "unlike": ("like_count", -1),
+            "collect": ("collect_count", 1),
+            "uncollect": ("collect_count", -1),
+        }
+        if action_type not in count_deltas or "post_id" not in self.result.post_stats.columns:
+            return
+
+        column, delta = count_deltas[action_type]
+        db_column = "mark_count" if column == "collect_count" else column
+        with sqlite3.connect(self.sqlite_path) as conn:
+            conn.execute(
+                f"UPDATE POSTS SET {db_column} = MAX(COALESCE({db_column}, 0) + ?, 0) WHERE thread_id = ?",
+                (delta, str(post_id)),
+            )
+            conn.commit()
+
+        stats = self.result.post_stats.copy()
+        if column not in stats.columns:
+            stats[column] = 0
+        mask = stats["post_id"].astype(str).eq(str(post_id))
+        if not mask.any():
+            return
+
+        stats.loc[mask, column] = (pd.to_numeric(stats.loc[mask, column], errors="coerce").fillna(0) + delta).clip(lower=0)
+        for stat_column in ["view_count", "like_count", "comment_count", "collect_count"]:
+            if stat_column not in stats.columns:
+                stats[stat_column] = 0
+            stats[stat_column] = pd.to_numeric(stats[stat_column], errors="coerce").fillna(0)
+        stats["hot_score"] = (
+            stats["view_count"] * 0.2
+            + stats["like_count"] * 0.3
+            + stats["comment_count"] * 0.3
+            + stats["collect_count"] * 0.2
+        )
+        stats["quality_score"] = (
+            stats["like_count"] * 0.35
+            + stats["comment_count"] * 0.30
+            + stats["collect_count"] * 0.35
+        ) / stats["view_count"].replace(0, np.nan)
+        stats["quality_score"] = stats["quality_score"].fillna(0).clip(0, 1)
+        self.result = replace(self.result, post_stats=stats)
 
     def load_ranker(self) -> None:
         """Load DeepFM artifacts when available; otherwise enable fallback ranking."""
@@ -216,6 +344,8 @@ class CampusRecommendService:
             "topic_type",
             "author_id",
             "publish_time",
+            "image_urls",
+            "img_count",
         ]
         stat_columns = [
             "post_id",
@@ -227,11 +357,15 @@ class CampusRecommendService:
         data = rows.copy()
         data = data.merge(posts[[c for c in post_columns if c in posts.columns]], on="post_id", how="left", suffixes=("", "_post"))
         data = data.merge(stats[[c for c in stat_columns if c in stats.columns]], on="post_id", how="left", suffixes=("", "_stat"))
-        for column in ["title", "content", "board", "tags", "topic_type", "author_id", "publish_time"]:
+        for column in ["title", "content", "board", "tags", "topic_type", "author_id", "publish_time", "image_urls", "img_count"]:
             post_column = f"{column}_post"
             if post_column in data.columns:
                 data[column] = data[column].where(data[column].notna(), data[post_column]) if column in data.columns else data[post_column]
                 data = data.drop(columns=[post_column])
+        if "image_urls" not in data.columns:
+            data["image_urls"] = [[] for _ in range(len(data))]
+        if "img_count" not in data.columns:
+            data["img_count"] = 0
         for column in ["view_count", "like_count", "comment_count", "collect_count"]:
             stat_column = f"{column}_stat"
             if stat_column in data.columns:
@@ -240,6 +374,16 @@ class CampusRecommendService:
             if column not in data.columns:
                 data[column] = 0
             data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0).astype(int)
+        return data
+
+    def _attach_author_nicknames(self, rows: pd.DataFrame, user_column: str = "author_id", output_column: str = "author_nickname") -> pd.DataFrame:
+        data = rows.copy()
+        if user_column not in data.columns or "user_id" not in self.result.users.columns or "nickname" not in self.result.users.columns:
+            data[output_column] = ""
+            return data
+
+        nickname_by_user = self.result.users.drop_duplicates("user_id").set_index("user_id")["nickname"]
+        data[output_column] = data[user_column].astype(str).map(nickname_by_user).fillna("")
         return data
 
     def recommend_for_user(
@@ -271,6 +415,7 @@ class CampusRecommendService:
             exclude_seen=exclude_seen,
         )
         final = self._attach_post_fields(reranked)
+        final = self._attach_author_nicknames(final)
         final["recommend_reason"] = final["recall_sources"].apply(self.get_recommend_reason)
 
         defaults = {
@@ -289,7 +434,10 @@ class CampusRecommendService:
             "tags",
             "topic_type",
             "author_id",
+            "author_nickname",
             "publish_time",
+            "image_urls",
+            "img_count",
             "view_count",
             "like_count",
             "comment_count",
@@ -345,6 +493,8 @@ class CampusRecommendService:
             "board",
             "tags",
             "publish_time",
+            "image_urls",
+            "img_count",
             "view_count",
             "like_count",
             "comment_count",
@@ -362,6 +512,8 @@ class CampusRecommendService:
         stat_rows = self.result.post_stats[self.result.post_stats["post_id"].astype(str).eq(str(post_id))]
         comment_rows = self.result.comments[self.result.comments["post_id"].astype(str).eq(str(post_id))].copy()
         tag_rows = self.result.post_tags[self.result.post_tags["post_id"].astype(str).eq(str(post_id))].copy()
+        post_rows = self._attach_author_nicknames(post_rows.copy())
+        comment_rows = self._attach_author_nicknames(comment_rows, user_column="user_id", output_column="nickname")
         comment_rows = comment_rows.sort_values("publish_time", ascending=True) if "publish_time" in comment_rows.columns else comment_rows
 
         return {
@@ -370,6 +522,60 @@ class CampusRecommendService:
             "comments": _records(comment_rows),
             "tags": _records(tag_rows),
         }
+
+    def create_post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist a new post to POSTS and refresh in-memory data."""
+
+        board = str(payload.get("board") or "").strip()
+        title = str(payload.get("title") or "").strip()
+        content = str(payload.get("content") or "").strip()
+        if board not in ALLOWED_BOARDS:
+            raise ValueError(f"Unsupported board: {board}")
+        if len(title) < 2 or len(content) < 5:
+            raise ValueError("title or content is too short")
+
+        raw_images = [
+            *(payload.get("image_paths") or []),
+            *(payload.get("image_urls") or []),
+        ]
+        image_paths = list(dict.fromkeys([path for path in (_canonical_image_path(item) for item in raw_images) if path]))
+        timestamp = pd.to_datetime(payload.get("created_at"), errors="coerce")
+        if pd.isna(timestamp):
+            timestamp = pd.Timestamp.now()
+        post_id = f"app_{int(time.time() * 1000)}"
+        user_id = str(payload.get("user_id") or "demo_user_A")
+        tags = tags_for_post(board, payload.get("tags") or "")
+        image_paths_json = json.dumps(image_paths, ensure_ascii=False)
+
+        with sqlite3.connect(self.sqlite_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO POSTS (
+                    thread_id, user_id, cate_id, cate_name, title, content, rwd,
+                    view_count, like_count, dislike_count, comment_count, mark_count,
+                    hot_val, img_count, image_paths_json, p_time, pt_time, post_time_text
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?)
+                """,
+                (
+                    post_id,
+                    user_id,
+                    board,
+                    board,
+                    title,
+                    content,
+                    "",
+                    len(image_paths),
+                    image_paths_json,
+                    int(timestamp.timestamp()),
+                    timestamp.strftime("%Y/%m/%d %H:%M"),
+                    timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
+            conn.commit()
+
+        self.reload_data()
+        return self.get_post_detail(post_id)
 
     def get_user_profile(self, user_id: str) -> dict[str, Any]:
         """Return user base fields plus profile fields."""
@@ -474,7 +680,23 @@ class CampusRecommendService:
                 rows,
             )
             conn.commit()
-        self.reload_data()
+        self._append_behaviors(
+            [
+                {
+                    "behavior_id": None,
+                    "user_id": str(user_id),
+                    "post_id": post_id,
+                    "action_type": "expose",
+                    "action_weight": ACTION_WEIGHTS["expose"],
+                    "timestamp": pd.Timestamp.fromtimestamp(event_time + index),
+                    "dwell_time": 0,
+                    "time_period": "",
+                    "is_positive": 0,
+                    "source": "sqlite",
+                }
+                for index, post_id in enumerate(unique_post_ids)
+            ]
+        )
 
     def record_user_behavior(
         self,
@@ -489,8 +711,10 @@ class CampusRecommendService:
         self._find_user(user_id)
         if self.result.posts[self.result.posts["post_id"].astype(str).eq(str(post_id))].empty:
             raise ValueError(f"post_id not found: {post_id}")
-        if action_type not in ACTION_WEIGHTS:
+        if action_type not in ACTION_WEIGHTS and action_type not in CANCEL_ACTIONS:
             raise ValueError(f"Unsupported action_type: {action_type}")
+        if action_type in CANCEL_ACTIONS:
+            return {key: _clean_value(value) for key, value in self._delete_user_behavior(user_id, post_id, action_type).items()}
 
         context = context or {}
         dwell = int(dwell_time or 0)
@@ -534,7 +758,8 @@ class CampusRecommendService:
             "is_positive": is_positive,
             "source": "sqlite",
         }
-        self.reload_data()
+        self._append_behaviors([behavior])
+        self._adjust_post_stat(str(post_id), action_type)
         return {key: _clean_value(value) for key, value in behavior.items()}
 
     def refresh_user_profile(self, user_id: str) -> dict[str, Any]:
@@ -555,13 +780,17 @@ class CampusRecommendService:
 
         recalled = hot_recall("_service_hot", self.result.posts, top_k=top_n)
         data = recalled.merge(self.result.posts, on="post_id", how="left")
+        data = self._attach_author_nicknames(data)
         data = data.merge(self.result.post_stats, on="post_id", how="left", suffixes=("", "_stat"))
         output_columns = [
             "post_id",
             "title",
             "board",
             "tags",
+            "author_nickname",
             "publish_time",
+            "image_urls",
+            "img_count",
             "view_count",
             "like_count",
             "comment_count",

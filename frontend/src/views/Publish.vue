@@ -30,15 +30,31 @@
         <span>标签（选填）</span>
         <input v-model="form.tags" placeholder="点击输入标签，回车添加，如：期末|课程评价" />
       </label>
+      <label>
+        <span>图片路径（选填）</span>
+        <textarea
+          v-model="form.imagePaths"
+          class="image-path-input"
+          maxlength="1200"
+          placeholder="每行一张图片，如：upload/2026/06/03/pkuuttjeex42lhb.jpeg"
+        ></textarea>
+        <small>{{ imagePaths.length }} 张</small>
+      </label>
       <div class="switch-row">
         <span>匿名发布</span>
         <button type="button" class="switch" :class="{ on: form.anonymous }" @click="form.anonymous = !form.anonymous">
           <i></i>
         </button>
       </div>
-      <div class="upload-placeholder">
+      <div class="upload-placeholder image-preview-row">
         <span>▣</span>
-        <p>添加图片（占位）</p>
+        <div>
+          <p>添加图片</p>
+          <small>支持 zanao 相对路径或完整图片链接</small>
+        </div>
+      </div>
+      <div v-if="previewUrls.length" class="post-image-grid preview">
+        <img v-for="url in previewUrls" :key="url" :src="url" alt="" loading="lazy" @error="hideBrokenImage" />
       </div>
       <p v-if="message" class="form-message">{{ message }}</p>
       <button class="primary-btn full-btn" type="submit">发布到校园论坛</button>
@@ -47,9 +63,10 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createPost, getTaxonomy } from '../api/request'
+import { DEFAULT_USER_ID, createPost, getTaxonomy } from '../api/request'
+import { imageUrlOf, parseImageInput } from '../utils/images'
 
 const router = useRouter()
 const message = ref('')
@@ -59,8 +76,12 @@ const form = reactive({
   title: '',
   content: '',
   tags: '',
+  imagePaths: '',
   anonymous: false
 })
+
+const imagePaths = computed(() => parseImageInput(form.imagePaths))
+const previewUrls = computed(() => imagePaths.value.map((path) => imageUrlOf(path)).filter(Boolean).slice(0, 6))
 
 onMounted(loadTaxonomy)
 
@@ -88,7 +109,13 @@ async function submitPost() {
     return
   }
   const payload = {
-    ...form,
+    user_id: localStorage.getItem('campus_user_id') || DEFAULT_USER_ID,
+    board: form.board,
+    title: form.title,
+    content: form.content,
+    tags: form.tags,
+    anonymous: form.anonymous,
+    image_paths: imagePaths.value,
     created_at: new Date().toISOString()
   }
   try {
@@ -101,5 +128,9 @@ async function submitPost() {
     message.value = '当前为前端模拟发布，后续可接入后端发帖接口。'
   }
   setTimeout(() => router.push('/feed'), 900)
+}
+
+function hideBrokenImage(event) {
+  event.currentTarget.style.display = 'none'
 }
 </script>

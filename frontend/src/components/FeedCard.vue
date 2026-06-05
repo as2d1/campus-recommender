@@ -6,16 +6,26 @@
     </header>
     <h2>{{ post.title || '无标题帖子' }}</h2>
     <p class="feed-content">{{ post.content || '这个帖子暂时没有正文内容。' }}</p>
+    <div v-if="imageUrls.length" class="post-image-grid compact" :class="{ single: imageUrls.length === 1 }">
+      <img
+        v-for="url in imageUrls"
+        :key="url"
+        :src="url"
+        alt=""
+        loading="lazy"
+        @error="hideBrokenImage"
+      />
+    </div>
     <div class="tag-row">
       <TagBadge v-for="tag in tagList" :key="tag" :label="tag" />
     </div>
     <RecommendInfo :post="post" />
     <footer class="card-foot">
       <span class="author-dot">●</span>
-      <span class="author">{{ post.author_id || '匿名同学' }}</span>
+      <span class="author">{{ post.author_nickname || post.author_id || '匿名同学' }}</span>
       <span>◎ {{ number(post.view_count) }}</span>
       <span>♥ {{ number(post.like_count) }}</span>
-      <span>□ {{ number(post.comment_count) }}</span>
+      <span class="mini-comment-meta"><i class="mini-comment-icon" aria-hidden="true"></i>{{ number(post.comment_count) }}</span>
     </footer>
   </article>
 </template>
@@ -24,6 +34,7 @@
 import { computed } from 'vue'
 import RecommendInfo from './RecommendInfo.vue'
 import TagBadge from './TagBadge.vue'
+import { imageUrlsOf } from '../utils/images'
 
 const props = defineProps({
   post: {
@@ -42,6 +53,8 @@ const tagList = computed(() =>
     .slice(0, 5)
 )
 
+const imageUrls = computed(() => imageUrlsOf(props.post).slice(0, 3))
+
 function number(value) {
   const n = Number(value || 0)
   if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
@@ -56,5 +69,9 @@ function timeText(value) {
   if (hours < 1) return '刚刚'
   if (hours < 24) return `${hours}小时前`
   return `${Math.floor(hours / 24)}天前`
+}
+
+function hideBrokenImage(event) {
+  event.currentTarget.style.display = 'none'
 }
 </script>

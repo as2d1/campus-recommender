@@ -7,6 +7,7 @@ the normalized dataframe shape expected by preprocessing and ranking code.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import sqlite3
 
@@ -18,6 +19,8 @@ from src.taxonomy import ALLOWED_BOARDS, tags_for_post, topic_for_board
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_SQLITE_PATH = PROJECT_ROOT.parent / "zanao.sqlite"
+IMAGE_CDN_BASE = "https://b1.cdn.zanao.com/"
+IMAGE_CDN_SUFFIX = "@!common"
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,34 @@ def _build_tags(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return tags, pd.DataFrame(post_tags)
 
 
+def normalize_image_url(path: object) -> str:
+    text = str(path or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://")):
+        if "cdn.zanao.com/" in text and "@" not in text.rsplit("/", 1)[-1]:
+            return f"{text}{IMAGE_CDN_SUFFIX}"
+        return text
+    return f"{IMAGE_CDN_BASE}{text.lstrip('/')}{IMAGE_CDN_SUFFIX}"
+
+
+def _parse_image_paths(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None or pd.isna(value):
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = [part.strip() for part in text.replace("\n", ",").split(",")]
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
 def _adapt_users(users: pd.DataFrame) -> pd.DataFrame:
     adapted = users.copy()
     adapted["status"] = adapted["is_forbid"].fillna(0).astype(int).map(lambda value: "blocked" if value else "normal")
@@ -125,7 +156,12 @@ def _adapt_posts(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     filtered["topic_type"] = filtered["board"].map(topic_for_board)
     filtered["publish_time"] = _parse_zanao_time(filtered["p_time"], filtered.get("pt_time"))
     filtered["tags"] = filtered["board"].map(tags_for_post)
-    filtered["has_image"] = (pd.to_numeric(filtered["img_count"], errors="coerce").fillna(0) > 0).astype(int)
+    image_source = filtered["image_paths_json"] if "image_paths_json" in filtered.columns else pd.Series(["[]"] * len(filtered), index=filtered.index)
+    filtered["image_paths"] = image_source.apply(_parse_image_paths)
+    filtered["image_urls"] = filtered["image_paths"].apply(lambda paths: [normalize_image_url(path) for path in paths if normalize_image_url(path)])
+    filtered["img_count"] = pd.to_numeric(filtered["img_count"], errors="coerce").fillna(0).astype(int)
+    filtered["img_count"] = filtered.apply(lambda row: max(int(row["img_count"]), len(row["image_paths"])), axis=1)
+    filtered["has_image"] = (filtered["img_count"] > 0).astype(int)
     filtered["collect_count"] = pd.to_numeric(filtered["mark_count"], errors="coerce").fillna(0).astype(int)
 
     stats = filtered[

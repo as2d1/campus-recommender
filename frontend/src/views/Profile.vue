@@ -2,10 +2,8 @@
   <div class="page profile-page">
     <header class="profile-hero">
       <button class="ghost-icon">◌</button>
-      <button class="ghost-icon" @click="loadProfile">刷新</button>
-      <div class="avatar">👨🏻‍🎓</div>
-      <h1>{{ shortUserId }}</h1>
-      <p>{{ profile.nickname || '匿名用户' }}</p>
+      <div class="avatar">{{ avatarInitial }}</div>
+      <h1>{{ displayName }}</h1>
       <section class="user-switch profile-switch">
         <input v-model="userInput" placeholder="输入 user_id" />
         <button @click="applyUser">切换</button>
@@ -23,15 +21,14 @@
           <TagBadge v-for="tag in tags(profile.short_term_tags)" :key="`s-${tag}`" :label="tag" />
         </div>
         <p class="muted">常看板块：{{ profile.preferred_boards || '暂无' }}</p>
-        <p class="muted">活跃时间段：{{ profile.active_time_period || '未知' }}</p>
       </section>
 
       <section class="panel">
         <h2>兴趣权重</h2>
         <InterestBar label="学习兴趣" :value="profile.learning_interest_weight" />
-        <InterestBar label="生活兴趣" :value="profile.life_interest_weight" color="linear-gradient(90deg, #ff7a1a, #fbbf24)" />
-        <InterestBar label="社交兴趣" :value="profile.social_interest_weight" color="linear-gradient(90deg, #38bdf8, #6366f1)" />
-        <InterestBar label="发展兴趣" :value="profile.career_interest_weight" color="linear-gradient(90deg, #22c55e, #14b8a6)" />
+        <InterestBar label="生活兴趣" :value="profile.life_interest_weight" color="linear-gradient(90deg, #d39a65, #e4bf86)" />
+        <InterestBar label="社交兴趣" :value="profile.social_interest_weight" color="linear-gradient(90deg, #8baac7, #afa2ca)" />
+        <InterestBar label="发展兴趣" :value="profile.career_interest_weight" color="linear-gradient(90deg, #7aa08a, #91b9a5)" />
       </section>
 
       <section class="menu-list">
@@ -64,6 +61,13 @@ const message = ref('')
 const shortUserId = computed(() => {
   const id = String(profile.value.user_id || userId.value || 'u_0001')
   return id.length > 14 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id
+})
+
+const displayName = computed(() => profile.value.nickname || shortUserId.value)
+
+const avatarInitial = computed(() => {
+  const name = String(profile.value.nickname || profile.value.user_id || userId.value || '?').trim()
+  return (name.match(/[\u4e00-\u9fa5A-Za-z0-9]/)?.[0] || '?').toUpperCase()
 })
 
 loadProfile()
