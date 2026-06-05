@@ -23,6 +23,13 @@ class BehaviorRequest(BaseModel):
     context: Optional[BehaviorContext] = None
 
 
+class PreferenceRequest(BaseModel):
+    """Cold-start preference choices for a user."""
+
+    selected_boards: list[str] = Field(default_factory=list)
+    selected_tags: list[str] = Field(default_factory=list)
+
+
 class ApiResponse(BaseModel):
     """Unified API response."""
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 from backend.app import service_unavailable_response
-from backend.schemas import fail, ok
+from backend.schemas import PreferenceRequest, fail, ok
 
 
 router = APIRouter(prefix="/api", tags=["users"])
@@ -22,6 +22,37 @@ def get_user_profile(user_id: str, request: Request) -> dict:
         return fail(str(exc))
     except Exception as exc:
         return fail(f"failed to get user profile: {exc}")
+
+
+@router.get("/users/{user_id}/status")
+def get_user_status(user_id: str, request: Request) -> dict:
+    service = request.app.state.service
+    if service is None:
+        return service_unavailable_response(request.app.state.service_error)
+    try:
+        return ok(service.get_user_status(user_id))
+    except Exception as exc:
+        return fail(f"failed to get user status: {exc}")
+
+
+@router.post("/users/{user_id}/preferences")
+def save_user_preferences(user_id: str, payload: PreferenceRequest, request: Request) -> dict:
+    service = request.app.state.service
+    if service is None:
+        return service_unavailable_response(request.app.state.service_error)
+    try:
+        return ok(
+            service.save_user_preferences(
+                user_id=user_id,
+                selected_boards=payload.selected_boards,
+                selected_tags=payload.selected_tags,
+            ),
+            "preferences saved",
+        )
+    except ValueError as exc:
+        return fail(str(exc))
+    except Exception as exc:
+        return fail(f"failed to save preferences: {exc}")
 
 
 @router.post("/users/{user_id}/refresh-profile")
@@ -60,3 +91,14 @@ def get_tags(
         return ok(service.get_tags(top_n=top_n))
     except Exception as exc:
         return fail(f"failed to get tags: {exc}")
+
+
+@router.get("/taxonomy")
+def get_taxonomy(request: Request) -> dict:
+    service = request.app.state.service
+    if service is None:
+        return service_unavailable_response(request.app.state.service_error)
+    try:
+        return ok(service.get_taxonomy())
+    except Exception as exc:
+        return fail(f"failed to get taxonomy: {exc}")

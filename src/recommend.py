@@ -51,7 +51,7 @@ def build_recall_results(user_id: str, result, text_bundle, user_profiles: pd.Da
     positive = build_positive_interactions(result.behaviors)
     item_similarity = build_item_similarity(positive)
     return [
-        hot_recall(user_id, result.posts, result.post_stats, top_k=recall_top_k),
+        hot_recall(user_id, result.posts, top_k=recall_top_k),
         latest_recall(user_id, result.posts, top_k=recall_top_k),
         content_recall(
             user_id,
@@ -62,7 +62,7 @@ def build_recall_results(user_id: str, result, text_bundle, user_profiles: pd.Da
             top_k=recall_top_k,
         ),
         itemcf_recall(user_id, result.behaviors, result.posts, top_k=recall_top_k, item_similarity=item_similarity),
-        profile_recall(user_id, result.users, result.posts, user_profiles, result.post_tags, top_k=recall_top_k),
+        profile_recall(user_id, result.posts, user_profiles, result.post_tags, top_k=recall_top_k),
         time_scene_recall(user_id, result.posts, time_period=time_period, top_k=recall_top_k),
     ]
 
@@ -111,10 +111,15 @@ def recommend_for_user(
     data = load_all_data()
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
-    user_profiles = build_user_profile_table(result.users, result.posts, result.behaviors)
+    user_profiles = build_user_profile_table(
+        result.users,
+        result.posts,
+        result.behaviors,
+        preferences=result.preferences,
+    )
 
     recall_results = build_recall_results(user_id, result, text_bundle, user_profiles, recall_top_k)
-    candidates = merge_recall_candidates(recall_results, result.posts, result.post_stats, top_k_candidates=candidate_top_k)
+    candidates = merge_recall_candidates(recall_results, result.posts, top_k_candidates=candidate_top_k)
     ranked = apply_ranker_if_available(candidates, result, user_profiles, model_path, encoder_path, log_score_stats)
     reranked = rerank_candidates(
         ranked,

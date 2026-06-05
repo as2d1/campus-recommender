@@ -7,7 +7,7 @@ import pandas as pd
 from scipy import sparse
 from sklearn.metrics.pairwise import cosine_similarity
 
-from src.recall import filter_valid_posts, format_recall_result, get_interacted_posts
+from src.recall import format_recall_result, get_interacted_posts
 
 
 def build_user_content_vector(
@@ -18,13 +18,8 @@ def build_user_content_vector(
 ) -> sparse.csr_matrix | None:
     """Build one user content vector from positive feedback posts."""
 
-    if behaviors.empty:
-        return None
     user_rows = behaviors[behaviors["user_id"].astype(str).eq(str(user_id))].copy()
-    if "is_positive" in user_rows.columns:
-        user_rows = user_rows[user_rows["is_positive"].fillna(0).astype(int).eq(1)]
-    else:
-        user_rows = user_rows[user_rows["action_type"].isin({"view", "like", "comment", "collect"})]
+    user_rows = user_rows[user_rows["is_positive"].astype(int).eq(1)]
     if user_rows.empty:
         return None
 
@@ -62,7 +57,7 @@ def content_recall(
     if user_vector is None:
         return pd.DataFrame(columns=["user_id", "post_id", "recall_score", "recall_source"])
 
-    candidates = filter_valid_posts(posts)
+    candidates = posts.drop_duplicates("post_id", keep="last").copy()
     if exclude_interacted:
         seen = get_interacted_posts(behaviors, user_id)
         candidates = candidates[~candidates["post_id"].astype(str).isin(seen)]

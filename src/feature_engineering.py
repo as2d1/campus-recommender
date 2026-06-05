@@ -15,7 +15,8 @@ try:
 except ImportError:  # pragma: no cover
     jieba = None
 
-from src.user_profile import UserProfile, get_time_period, split_tags
+from src.taxonomy import split_tags
+from src.user_profile import UserProfile, get_time_period
 
 
 TRAINING_SAMPLE_COLUMNS = [
@@ -96,10 +97,6 @@ def add_post_features(posts: pd.DataFrame, now: pd.Timestamp | None = None) -> p
     )
     posts["final_hot_score"] = posts["hot_score"] / (1 + posts["post_age_hours"] / 24)
     posts["quality_score"] = posts["quality_score"].fillna(0).clip(0, 1)
-    posts["keyword_list"] = posts.apply(
-        lambda row: row["keyword_list"] if str(row.get("keyword_list", "")).strip() else "|".join(split_tags(row["tags"])[:5]),
-        axis=1,
-    )
     return posts
 
 
@@ -131,7 +128,6 @@ def build_post_feature_table(posts: pd.DataFrame) -> pd.DataFrame:
         "topic_type",
         "title",
         "content",
-        "keyword_list",
         "publish_time",
         "post_age_hours",
         "hot_score",
@@ -140,11 +136,10 @@ def build_post_feature_table(posts: pd.DataFrame) -> pd.DataFrame:
         "content_length",
         "has_image",
         "img_count",
-        "has_contact_info",
     ]
     for column in post_columns:
         if column not in posts.columns:
-            posts[column] = 0 if column in {"post_age_hours", "hot_score", "final_hot_score", "quality_score", "content_length", "has_image", "img_count", "has_contact_info"} else ""
+            posts[column] = 0 if column in {"post_age_hours", "hot_score", "final_hot_score", "quality_score", "content_length", "has_image", "img_count"} else ""
     return posts[post_columns].copy()
 
 

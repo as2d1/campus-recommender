@@ -12,19 +12,12 @@ import sqlite3
 
 import pandas as pd
 
+from src.taxonomy import ALLOWED_BOARDS, tags_for_post, topic_for_board
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_SQLITE_PATH = PROJECT_ROOT.parent / "zanao.sqlite"
-ALLOWED_BOARDS = ["打听求助", "恋爱交友", "校园趣事", "兼职招聘", "校园招聘", "二手闲置"]
-BOARD_TOPIC_MAP = {
-    "打听求助": "生活",
-    "恋爱交友": "社交",
-    "校园趣事": "社交",
-    "兼职招聘": "发展",
-    "校园招聘": "发展",
-    "二手闲置": "生活",
-}
 
 
 @dataclass(frozen=True)
@@ -36,7 +29,25 @@ class CampusData:
     tags: pd.DataFrame
     post_tags: pd.DataFrame
     behaviors: pd.DataFrame
+    preferences: pd.DataFrame
     user_profiles: pd.DataFrame
+
+
+def ensure_app_tables(conn: sqlite3.Connection) -> None:
+    """Create app-owned tables that augment the imported Zanao data."""
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS USER_PREFERENCES (
+            user_id TEXT PRIMARY KEY,
+            selected_boards_json TEXT NOT NULL DEFAULT '[]',
+            selected_tags_json TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.commit()
 
 
 def _read_table(conn: sqlite3.Connection, table_name: str) -> pd.DataFrame:
@@ -52,13 +63,13 @@ def _parse_zanao_time(epoch: pd.Series, text_time: pd.Series | None = None) -> p
 
 
 def _build_tags(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    tag_names = sorted(set(posts["board"].dropna().astype(str)) | set(posts["topic_type"].dropna().astype(str)))
+    tag_names = sorted({tag for value in posts["tags"].dropna() for tag in str(value).split("|") if tag})
     tags = pd.DataFrame(
         [{"tag_id": f"tag_{index + 1:03d}", "tag_name": tag_name, "view_count": 0} for index, tag_name in enumerate(tag_names)]
     )
     post_tags = []
-    for row in posts[["post_id", "board", "topic_type"]].itertuples(index=False):
-        for tag_name in dict.fromkeys([row.board, row.topic_type]):
+    for row in posts[["post_id", "tags"]].itertuples(index=False):
+        for tag_name in dict.fromkeys([tag for tag in str(row.tags).split("|") if tag]):
             if tag_name:
                 post_tags.append({"post_id": row.post_id, "tag_name": tag_name})
     return tags, pd.DataFrame(post_tags)
@@ -89,20 +100,32 @@ def _merge_event_visitors(users: pd.DataFrame, behaviors: pd.DataFrame) -> pd.Da
     return pd.concat([users, _adapt_users(visitor_rows)], ignore_index=True)
 
 
+def _merge_preference_users(users: pd.DataFrame, preferences: pd.DataFrame) -> pd.DataFrame:
+    if preferences.empty:
+        return users
+    existing = set(users["user_id"].astype(str))
+    preference_ids = set(preferences["user_id"].dropna().astype(str))
+    missing = sorted(preference_ids - existing)
+    if not missing:
+        return users
+    rows = pd.DataFrame(
+        {
+            "user_id": missing,
+            "nickname": ["冷启动用户"] * len(missing),
+            "headimgurl_hash": [""] * len(missing),
+            "is_forbid": [0] * len(missing),
+        }
+    )
+    return pd.concat([users, _adapt_users(rows)], ignore_index=True)
+
+
 def _adapt_posts(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     filtered = posts[posts["cate_name"].isin(ALLOWED_BOARDS)].copy()
     filtered = filtered.rename(columns={"thread_id": "post_id", "user_id": "author_id", "cate_name": "board"})
-    filtered["topic_type"] = filtered["board"].map(BOARD_TOPIC_MAP).fillna("生活")
+    filtered["topic_type"] = filtered["board"].map(topic_for_board)
     filtered["publish_time"] = _parse_zanao_time(filtered["p_time"], filtered.get("pt_time"))
-    filtered["tags"] = filtered["board"] + "|" + filtered["topic_type"]
+    filtered["tags"] = filtered["board"].map(tags_for_post)
     filtered["has_image"] = (pd.to_numeric(filtered["img_count"], errors="coerce").fillna(0) > 0).astype(int)
-    filtered["price"] = 0
-    filtered["need_pay"] = 0
-    filtered["has_contact_info"] = 0
-    filtered["report_status"] = "normal"
-    filtered["finish_status"] = "open"
-    filtered["status"] = "normal"
-    filtered["keyword_list"] = ""
     filtered["collect_count"] = pd.to_numeric(filtered["mark_count"], errors="coerce").fillna(0).astype(int)
 
     stats = filtered[
@@ -126,8 +149,6 @@ def _adapt_posts(posts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 def _adapt_comments(comments: pd.DataFrame) -> pd.DataFrame:
     adapted = comments.rename(columns={"thread_id": "post_id", "post_time_text": "publish_time"}).copy()
     adapted["publish_time"] = _parse_zanao_time(adapted["post_time"], adapted.get("publish_time"))
-    adapted["status"] = "normal"
-    adapted["is_hide"] = 0
     return adapted
 
 
@@ -171,12 +192,15 @@ def load_all_data(sqlite_path: str | Path = DEFAULT_SQLITE_PATH) -> CampusData:
         raise FileNotFoundError(f"SQLite database not found: {db_path}")
 
     with sqlite3.connect(db_path) as conn:
+        ensure_app_tables(conn)
         users = _adapt_users(_read_table(conn, "USERS"))
         posts, post_stats = _adapt_posts(_read_table(conn, "POSTS"))
         comments = _adapt_comments(_read_table(conn, "COMMENTS"))
         behaviors = _adapt_behaviors(_read_table(conn, "USER_EVENTS"))
+        preferences = _read_table(conn, "USER_PREFERENCES")
 
     users = _merge_event_visitors(users, behaviors)
+    users = _merge_preference_users(users, preferences)
     tags, post_tags = _build_tags(posts)
     return CampusData(
         users=users,
@@ -186,5 +210,6 @@ def load_all_data(sqlite_path: str | Path = DEFAULT_SQLITE_PATH) -> CampusData:
         tags=tags,
         post_tags=post_tags,
         behaviors=behaviors,
+        preferences=preferences,
         user_profiles=pd.DataFrame(),
     )

@@ -18,7 +18,6 @@ MERGED_COLUMNS = [
     "topic_type",
     "publish_time",
     "post_age_hours",
-    "status",
 ]
 
 DEFAULT_RECALL_WEIGHTS = {
@@ -29,19 +28,6 @@ DEFAULT_RECALL_WEIGHTS = {
     "profile": 0.9,
     "time_scene": 0.7,
 }
-
-
-def filter_valid_posts(posts: pd.DataFrame) -> pd.DataFrame:
-    """Remove abnormal posts before candidate merge."""
-
-    valid = posts.copy()
-    if "status" in valid.columns:
-        valid = valid[valid["status"].fillna("normal").eq("normal")]
-    if "report_status" in valid.columns:
-        valid = valid[~valid["report_status"].fillna("normal").isin(["blocked", "deleted", "abnormal", "违规", "suspect"])]
-    if "finish_status" in valid.columns:
-        valid = valid[~valid["finish_status"].fillna("open").isin(["blocked", "deleted"])]
-    return valid.drop_duplicates("post_id", keep="last").reset_index(drop=True)
 
 
 def minmax_normalize(group: pd.DataFrame) -> pd.DataFrame:
@@ -76,26 +62,12 @@ def prepare_recall_results(recall_results: list[pd.DataFrame]) -> pd.DataFrame:
     return merged
 
 
-def build_post_feature_table(posts: pd.DataFrame, post_stats: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Build post metadata table joined with hot statistics."""
+def build_post_feature_table(posts: pd.DataFrame) -> pd.DataFrame:
+    """Build post metadata table for candidate merging."""
 
-    valid_posts = filter_valid_posts(posts)
-    post_features = valid_posts.copy()
-    if post_stats is not None and not post_stats.empty:
-        stats_columns = [column for column in ["post_id", "hot_score", "final_hot_score"] if column in post_stats.columns]
-        if len(stats_columns) > 1:
-            stats = post_stats[stats_columns].drop_duplicates("post_id", keep="last")
-            missing_stat_columns = [column for column in ["hot_score", "final_hot_score"] if column not in post_features.columns]
-            if missing_stat_columns:
-                post_features = post_features.merge(stats[["post_id", *missing_stat_columns]], on="post_id", how="left")
-
+    post_features = posts.drop_duplicates("post_id", keep="last").copy()
     for column in ["hot_score", "final_hot_score", "post_age_hours"]:
-        if column not in post_features.columns:
-            post_features[column] = 0.0
         post_features[column] = pd.to_numeric(post_features[column], errors="coerce").fillna(0.0)
-    for column in ["board", "tags", "topic_type", "publish_time", "status"]:
-        if column not in post_features.columns:
-            post_features[column] = ""
     return post_features[
         [
             "post_id",
@@ -106,7 +78,6 @@ def build_post_feature_table(posts: pd.DataFrame, post_stats: pd.DataFrame | Non
             "topic_type",
             "publish_time",
             "post_age_hours",
-            "status",
         ]
     ].copy()
 
@@ -114,7 +85,6 @@ def build_post_feature_table(posts: pd.DataFrame, post_stats: pd.DataFrame | Non
 def merge_recall_candidates(
     recall_results: list[pd.DataFrame],
     posts: pd.DataFrame,
-    post_stats: pd.DataFrame | None = None,
     recall_weights: dict[str, float] | None = None,
     source_count_bonus_weight: float = 0.05,
     top_k_candidates: int = 200,
@@ -145,9 +115,8 @@ def merge_recall_candidates(
     grouped["merged_recall_score"] = grouped["weighted_score"] + source_count_bonus_weight * grouped["source_count"]
     grouped = grouped.drop(columns=["weighted_score"])
 
-    post_features = build_post_feature_table(posts, post_stats)
+    post_features = build_post_feature_table(posts)
     candidates = grouped.merge(post_features, on="post_id", how="inner")
-    candidates = candidates[candidates["status"].fillna("normal").eq("normal")]
     candidates = candidates.sort_values("merged_recall_score", ascending=False).head(top_k_candidates)
 
     for column in MERGED_COLUMNS:

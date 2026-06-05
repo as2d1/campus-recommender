@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from src.user_profile import split_tags
+from src.taxonomy import split_tags
 
 
 def get_seen_posts(behaviors: pd.DataFrame, user_id: str) -> set[str]:
@@ -28,10 +28,6 @@ def filter_candidates(
     """Apply hard filters before reranking."""
 
     filtered = candidates.copy()
-    if "status" in filtered.columns:
-        filtered = filtered[filtered["status"].fillna("normal").eq("normal")]
-    if "report_status" in filtered.columns:
-        filtered = filtered[~filtered["report_status"].fillna("normal").isin(["blocked", "deleted", "abnormal", "违规", "suspect"])]
     if exclude_seen and behaviors is not None:
         seen = get_seen_posts(behaviors, user_id)
         filtered = filtered[~filtered["post_id"].astype(str).isin(seen)]

@@ -34,6 +34,22 @@ export async function getRecommend(userId, topN = 10) {
   }
 }
 
+export async function getUserStatus(userId) {
+  try {
+    return unwrap(await client.get(`/api/users/${encodeURIComponent(userId)}/status`))
+  } catch (error) {
+    friendlyError(error)
+  }
+}
+
+export async function saveUserPreferences(userId, data) {
+  try {
+    return unwrap(await client.post(`/api/users/${encodeURIComponent(userId)}/preferences`, data))
+  } catch (error) {
+    friendlyError(error)
+  }
+}
+
 export async function getHotPosts(topN = 20) {
   try {
     return unwrap(await client.get('/api/posts/hot', { params: { top_n: topN } }))
@@ -93,6 +109,14 @@ export async function getBoards() {
 export async function getTags() {
   try {
     return unwrap(await client.get('/api/tags'))
+  } catch (error) {
+    friendlyError(error)
+  }
+}
+
+export async function getTaxonomy() {
+  try {
+    return unwrap(await client.get('/api/taxonomy'))
   } catch (error) {
     friendlyError(error)
   }

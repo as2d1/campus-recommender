@@ -47,22 +47,42 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createPost } from '../api/request'
+import { createPost, getTaxonomy } from '../api/request'
 
 const router = useRouter()
 const message = ref('')
-const boards = ['打听求助', '恋爱交友', '校园趣事', '兼职招聘', '校园招聘', '二手闲置']
+const boards = ref([])
 const form = reactive({
-  board: boards[0],
+  board: '',
   title: '',
   content: '',
   tags: '',
   anonymous: false
 })
 
+onMounted(loadTaxonomy)
+
+async function loadTaxonomy() {
+  try {
+    const taxonomy = await getTaxonomy()
+    if (Array.isArray(taxonomy.boards) && taxonomy.boards.length) {
+      boards.value = taxonomy.boards
+      if (!boards.value.includes(form.board)) {
+        form.board = boards.value[0]
+      }
+    }
+  } catch {
+    // Keep fallback boards when the backend is unavailable.
+  }
+}
+
 async function submitPost() {
+  if (!form.board) {
+    message.value = '板块加载中，请稍后再发布。'
+    return
+  }
   if (form.title.trim().length < 2 || form.content.trim().length < 5) {
     message.value = '标题至少 2 个字，正文至少 5 个字。'
     return

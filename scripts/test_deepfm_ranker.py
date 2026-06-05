@@ -49,13 +49,18 @@ def main() -> None:
     data = load_all_data()
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
-    user_profiles = build_user_profile_table(result.users, result.posts, result.behaviors)
+    user_profiles = build_user_profile_table(
+        result.users,
+        result.posts,
+        result.behaviors,
+        preferences=result.preferences,
+    )
     user_id = args.user_id or str(result.users.iloc[0]["user_id"])
 
     positive = build_positive_interactions(result.behaviors)
     item_similarity = build_item_similarity(positive)
     recall_results = [
-        hot_recall(user_id, result.posts, result.post_stats, top_k=20),
+        hot_recall(user_id, result.posts, top_k=20),
         latest_recall(user_id, result.posts, top_k=20),
         content_recall(
             user_id,
@@ -72,9 +77,9 @@ def main() -> None:
             top_k=20,
             item_similarity=item_similarity,
         ),
-        profile_recall(user_id, result.users, result.posts, user_profiles, result.post_tags, top_k=20),
+        profile_recall(user_id, result.posts, user_profiles, result.post_tags, top_k=20),
     ]
-    candidates = merge_recall_candidates(recall_results, result.posts, result.post_stats, top_k_candidates=50)
+    candidates = merge_recall_candidates(recall_results, result.posts, top_k_candidates=50)
     ranked = rank_candidates(
         candidate_df=candidates,
         model=model,

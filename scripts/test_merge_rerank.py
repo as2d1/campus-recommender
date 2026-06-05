@@ -38,7 +38,7 @@ def build_all_recall_results(user_id: str, result, text_bundle, user_profiles, r
     positive = build_positive_interactions(result.behaviors)
     item_similarity = build_item_similarity(positive)
     return [
-        hot_recall(user_id, result.posts, result.post_stats, top_k=recall_top_k),
+        hot_recall(user_id, result.posts, top_k=recall_top_k),
         latest_recall(user_id, result.posts, top_k=recall_top_k),
         content_recall(
             user_id,
@@ -57,7 +57,6 @@ def build_all_recall_results(user_id: str, result, text_bundle, user_profiles, r
         ),
         profile_recall(
             user_id,
-            result.users,
             result.posts,
             user_profiles,
             result.post_tags,
@@ -72,14 +71,18 @@ def main() -> None:
     data = load_all_data()
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
-    user_profiles = build_user_profile_table(result.users, result.posts, result.behaviors)
+    user_profiles = build_user_profile_table(
+        result.users,
+        result.posts,
+        result.behaviors,
+        preferences=result.preferences,
+    )
 
     user_id = args.user_id or str(result.users.iloc[0]["user_id"])
     recall_results = build_all_recall_results(user_id, result, text_bundle, user_profiles, args.recall_top_k)
     candidates = merge_recall_candidates(
         recall_results=recall_results,
         posts=result.posts,
-        post_stats=result.post_stats,
         top_k_candidates=args.candidate_top_k,
     )
     final_recommendations = rerank_candidates(

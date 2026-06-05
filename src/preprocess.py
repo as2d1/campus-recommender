@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.data_loader import CampusData
+from src.taxonomy import topic_for_board
 
 
 ACTION_WEIGHTS = {
@@ -23,15 +24,6 @@ ACTION_WEIGHTS = {
 STRONG_POSITIVE_ACTIONS = {"like", "comment", "collect"}
 WEAK_POSITIVE_DWELL_SECONDS = 30
 SHORT_DWELL_SECONDS = 8
-BOARD_TOPIC_MAP = {
-    "二手闲置": ("二手闲置", "生活"),
-    "打听求助": ("打听求助", "生活"),
-    "恋爱交友": ("恋爱交友", "社交"),
-    "校园趣事": ("校园趣事", "社交"),
-    "兼职招聘": ("兼职招聘", "发展"),
-    "校园招聘": ("校园招聘", "发展"),
-}
-
 
 @dataclass(frozen=True)
 class PreprocessResult:
@@ -42,16 +34,11 @@ class PreprocessResult:
     tags: pd.DataFrame
     post_tags: pd.DataFrame
     behaviors: pd.DataFrame
+    preferences: pd.DataFrame
     user_profiles: pd.DataFrame
     samples: pd.DataFrame
     train_samples: pd.DataFrame
     test_samples: pd.DataFrame
-
-
-def split_tags(value: object) -> list[str]:
-    if pd.isna(value):
-        return []
-    return [tag.strip() for tag in str(value).split("|") if tag.strip()]
 
 
 def get_time_period(timestamp: pd.Timestamp) -> str:
@@ -71,15 +58,10 @@ def get_time_period(timestamp: pd.Timestamp) -> str:
 
 def normalize_board_and_topic(posts: pd.DataFrame) -> pd.DataFrame:
     posts = posts.copy()
-    mapped = posts["board"].map(lambda board: BOARD_TOPIC_MAP.get(str(board), (str(board), "生活")))
-    posts["board"] = mapped.map(lambda item: item[0])
-    posts["topic_type"] = posts["topic_type"].fillna(mapped.map(lambda item: item[1]))
-    posts["topic_type"] = posts.apply(
-        lambda row: BOARD_TOPIC_MAP.get(str(row["board"]), (row["board"], row["topic_type"]))[1]
-        if pd.isna(row["topic_type"]) or row["topic_type"] == ""
-        else row["topic_type"],
-        axis=1,
-    )
+    posts["board"] = posts["board"].astype(str)
+    mapped_topic = posts["board"].map(topic_for_board)
+    posts["topic_type"] = posts["topic_type"].where(posts["topic_type"].astype(str).str.len() > 0, mapped_topic)
+    posts["topic_type"] = posts["topic_type"].fillna(mapped_topic)
     return posts
 
 
@@ -95,7 +77,7 @@ def parse_time_columns(data: CampusData) -> CampusData:
     post_stats["update_time"] = pd.to_datetime(post_stats["update_time"], errors="coerce")
     comments["publish_time"] = pd.to_datetime(comments["publish_time"], errors="coerce")
     behaviors["timestamp"] = pd.to_datetime(behaviors["timestamp"], errors="coerce")
-    if not user_profiles.empty and "last_update_time" in user_profiles.columns:
+    if not user_profiles.empty:
         user_profiles["last_update_time"] = pd.to_datetime(user_profiles["last_update_time"], errors="coerce")
 
     return CampusData(
@@ -106,27 +88,20 @@ def parse_time_columns(data: CampusData) -> CampusData:
         tags=data.tags.copy(),
         post_tags=data.post_tags.copy(),
         behaviors=behaviors,
+        preferences=data.preferences.copy(),
         user_profiles=user_profiles,
     )
 
 
 def clean_users(users: pd.DataFrame) -> pd.DataFrame:
     users = users.copy()
-    defaults = {
-        "nickname": "",
-        "status": "normal",
-    }
-    for column, value in defaults.items():
-        if column not in users.columns:
-            users[column] = value
-    users = users.fillna(defaults)
     users = users[users["status"].eq("normal")]
     return users.drop_duplicates("user_id", keep="last").reset_index(drop=True)
 
 
 def prepare_post_stats(post_stats: pd.DataFrame, posts: pd.DataFrame) -> pd.DataFrame:
     stats = post_stats.copy()
-    numeric_columns = [
+    count_columns = [
         "view_count",
         "like_count",
         "comment_count",
@@ -134,18 +109,13 @@ def prepare_post_stats(post_stats: pd.DataFrame, posts: pd.DataFrame) -> pd.Data
         "dislike_count",
         "hot_val",
         "hot_rank",
-        "hot_score",
-        "final_hot_score",
-        "quality_score",
     ]
-    for column in numeric_columns:
-        if column not in stats.columns:
-            stats[column] = 0
+    for column in count_columns:
         stats[column] = pd.to_numeric(stats[column], errors="coerce").fillna(0)
 
     stats = stats.drop_duplicates("post_id", keep="last")
     stats = stats.merge(posts[["post_id", "post_age_hours"]], on="post_id", how="right")
-    stats[numeric_columns] = stats[numeric_columns].fillna(0)
+    stats[count_columns] = stats[count_columns].fillna(0)
     stats["hot_score"] = (
         stats["view_count"] * 0.2
         + stats["like_count"] * 0.3
@@ -167,63 +137,37 @@ def clean_posts(posts: pd.DataFrame, post_stats: pd.DataFrame, now: pd.Timestamp
         now = pd.Timestamp.now()
 
     posts = posts.copy()
-    defaults = {
-        "author_id": "",
-        "cate_id": "",
-        "board": "校园趣事",
-        "title": "",
-        "content": "",
-        "img_count": 0,
-        "has_image": 0,
-        "tags": "",
-        "topic_type": "",
-        "price": 0,
-        "need_pay": 0,
-        "has_contact_info": 0,
-        "report_status": "normal",
-        "finish_status": "open",
-        "status": "normal",
-        "keyword_list": "",
-    }
-    for column, value in defaults.items():
-        if column not in posts.columns:
-            posts[column] = value
-    posts = posts.fillna(defaults)
+    posts[["title", "content", "tags", "topic_type"]] = posts[["title", "content", "tags", "topic_type"]].fillna("")
     posts = normalize_board_and_topic(posts)
     posts["publish_time"] = posts["publish_time"].fillna(now)
     posts["post_age_hours"] = ((now - posts["publish_time"]).dt.total_seconds().clip(lower=0) / 3600)
     posts["content_length"] = posts["content"].fillna("").astype(str).str.len()
     posts["img_count"] = pd.to_numeric(posts["img_count"], errors="coerce").fillna(0).astype(int)
     posts["has_image"] = (pd.to_numeric(posts["has_image"], errors="coerce").fillna(0).astype(int) | (posts["img_count"] > 0)).astype(int)
-    posts["has_contact_info"] = pd.to_numeric(posts["has_contact_info"], errors="coerce").fillna(0).astype(int)
-    posts["need_pay"] = pd.to_numeric(posts["need_pay"], errors="coerce").fillna(0).astype(int)
 
-    # Drop plaintext contact columns if a HAR parser or source dump provided them.
-    contact_columns = ["contact_person", "contact_phone", "contact_qq", "contact_wx"]
-    posts = posts.drop(columns=[column for column in contact_columns if column in posts.columns], errors="ignore")
-    posts = posts[posts["status"].eq("normal")]
-    posts = posts[~posts["report_status"].isin(["blocked", "deleted", "abnormal", "违规"])]
     posts = posts.drop_duplicates("post_id", keep="last").reset_index(drop=True)
 
     post_stats = prepare_post_stats(post_stats, posts)
+    stat_columns = [
+        "view_count",
+        "like_count",
+        "dislike_count",
+        "comment_count",
+        "collect_count",
+        "hot_val",
+        "update_time",
+        "hot_rank",
+        "hot_score",
+        "final_hot_score",
+        "quality_score",
+    ]
+    posts = posts.drop(columns=stat_columns, errors="ignore")
     posts = posts.merge(post_stats, on="post_id", how="left")
     return posts, post_stats
 
 
 def clean_behaviors(behaviors: pd.DataFrame, users: pd.DataFrame, posts: pd.DataFrame) -> pd.DataFrame:
     behaviors = behaviors.copy()
-    defaults = {
-        "behavior_id": "",
-        "action_type": "view",
-        "action_weight": 1,
-        "dwell_time": 0,
-        "time_period": "",
-        "is_positive": np.nan,
-        "source": "unknown",
-    }
-    for column, value in defaults.items():
-        if column not in behaviors.columns:
-            behaviors[column] = value
     behaviors = behaviors.dropna(subset=["user_id", "post_id", "timestamp"])
     behaviors = behaviors[behaviors["user_id"].isin(set(users["user_id"]))]
     behaviors = behaviors[behaviors["post_id"].isin(set(posts["post_id"]))]
@@ -242,15 +186,15 @@ def clean_behaviors(behaviors: pd.DataFrame, users: pd.DataFrame, posts: pd.Data
 
 
 def label_behavior(row: pd.Series) -> int:
-    action = str(row.get("action_type", ""))
-    dwell_time = int(row.get("dwell_time", 0))
+    action = str(row["action_type"])
+    dwell_time = int(row["dwell_time"])
     if action in STRONG_POSITIVE_ACTIONS:
         return 1
     if action == "view" and dwell_time >= WEAK_POSITIVE_DWELL_SECONDS:
         return 1
     if action in {"skip", "dislike", "report"} or dwell_time <= SHORT_DWELL_SECONDS:
         return 0
-    return int(row.get("is_positive", 0) == 1)
+    return 0
 
 
 def build_behavior_samples(behaviors: pd.DataFrame) -> pd.DataFrame:
@@ -341,22 +285,30 @@ def split_train_test_by_time(samples: pd.DataFrame, test_ratio: float = 0.2) -> 
     return samples.iloc[:split_index].reset_index(drop=True), samples.iloc[split_index:].reset_index(drop=True)
 
 
-def clean_side_tables(data: CampusData, valid_posts: pd.DataFrame, valid_users: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def clean_side_tables(data: CampusData, valid_posts: pd.DataFrame, valid_users: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     valid_post_ids = set(valid_posts["post_id"])
+    valid_user_ids = set(valid_users["user_id"])
     comments = data.comments.copy()
     comments = comments[comments["post_id"].isin(valid_post_ids)]
-    comments = comments[comments["status"].fillna("normal").eq("normal")]
-    comments = comments[comments["is_hide"].fillna(0).astype(int).eq(0)]
 
     post_tags = data.post_tags.copy()
     post_tags = post_tags[post_tags["post_id"].isin(valid_post_ids)].drop_duplicates()
 
+    preferences = data.preferences.copy()
+    if not preferences.empty:
+        preferences = preferences[preferences["user_id"].isin(valid_user_ids)].drop_duplicates("user_id", keep="last")
+
     profiles = data.user_profiles.copy()
     if not profiles.empty:
-        valid_user_ids = set(valid_users["user_id"])
         profiles = profiles[profiles["user_id"].isin(valid_user_ids)].drop_duplicates("user_id", keep="last")
 
-    return comments.reset_index(drop=True), data.tags.copy().drop_duplicates("tag_id"), post_tags.reset_index(drop=True), profiles.reset_index(drop=True)
+    return (
+        comments.reset_index(drop=True),
+        data.tags.copy().drop_duplicates("tag_id"),
+        post_tags.reset_index(drop=True),
+        preferences.reset_index(drop=True),
+        profiles.reset_index(drop=True),
+    )
 
 
 def preprocess_all(
@@ -371,7 +323,7 @@ def preprocess_all(
     users = clean_users(data.users)
     posts, post_stats = clean_posts(data.posts, data.post_stats)
     behaviors = clean_behaviors(data.behaviors, users, posts)
-    comments, tags, post_tags, user_profiles = clean_side_tables(data, posts, users)
+    comments, tags, post_tags, preferences, user_profiles = clean_side_tables(data, posts, users)
     samples = build_labeled_samples(
         users=users,
         posts=posts,
@@ -388,6 +340,7 @@ def preprocess_all(
         tags=tags,
         post_tags=post_tags,
         behaviors=behaviors,
+        preferences=preferences,
         user_profiles=user_profiles,
         samples=samples,
         train_samples=train_samples,

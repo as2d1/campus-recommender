@@ -24,11 +24,17 @@ def build_current_training_samples():
     data = load_all_data()
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
-    profile_table = build_user_profile_table(result.users, result.posts, result.behaviors)
+    profile_table = build_user_profile_table(
+        result.users,
+        result.posts,
+        result.behaviors,
+        preferences=result.preferences,
+    )
     profiles = build_user_profiles(
         users=result.users,
         posts=result.posts,
         behaviors=result.behaviors,
+        preferences=result.preferences,
         user_profiles_df=profile_table,
         post_id_to_index=text_bundle.post_id_to_index,
         text_matrix=text_bundle.post_text_matrix,

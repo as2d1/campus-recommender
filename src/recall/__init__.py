@@ -5,28 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.taxonomy import split_tags
+
 
 RECALL_COLUMNS = ["user_id", "post_id", "recall_score", "recall_source"]
 POSITIVE_ACTIONS = {"view", "like", "comment", "collect"}
-
-
-def split_tags(value: object) -> list[str]:
-    if pd.isna(value):
-        return []
-    return [tag.strip() for tag in str(value).split("|") if tag.strip()]
-
-
-def filter_valid_posts(posts: pd.DataFrame) -> pd.DataFrame:
-    """Filter deleted, blocked, or abnormal posts."""
-
-    valid = posts.copy()
-    if "status" in valid.columns:
-        valid = valid[valid["status"].fillna("normal").eq("normal")]
-    if "report_status" in valid.columns:
-        valid = valid[~valid["report_status"].fillna("normal").isin(["blocked", "deleted", "abnormal", "违规", "suspect"])]
-    if "finish_status" in valid.columns:
-        valid = valid[~valid["finish_status"].fillna("open").isin(["blocked", "deleted"])]
-    return valid.drop_duplicates("post_id", keep="last").reset_index(drop=True)
 
 
 def normalize_score(series: pd.Series) -> pd.Series:
@@ -43,14 +26,9 @@ def normalize_score(series: pd.Series) -> pd.Series:
 def get_interacted_posts(behaviors: pd.DataFrame, user_id: str, positive_only: bool = False) -> set[str]:
     """Return posts the user has interacted with."""
 
-    if behaviors.empty:
-        return set()
     user_rows = behaviors[behaviors["user_id"].astype(str).eq(str(user_id))]
     if positive_only:
-        if "is_positive" in user_rows.columns:
-            user_rows = user_rows[user_rows["is_positive"].fillna(0).astype(int).eq(1)]
-        else:
-            user_rows = user_rows[user_rows["action_type"].isin(POSITIVE_ACTIONS)]
+        user_rows = user_rows[user_rows["is_positive"].astype(int).eq(1)]
     return set(user_rows["post_id"].astype(str))
 
 

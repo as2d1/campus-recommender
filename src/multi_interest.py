@@ -21,7 +21,8 @@ import pandas as pd
 from scipy import sparse
 from sklearn.metrics.pairwise import cosine_similarity
 
-from src.user_profile import ACTION_WEIGHTS, INTEREST_DIRECTIONS, infer_interest_direction, split_tags
+from src.taxonomy import INTEREST_DIRECTIONS, infer_interest_direction
+from src.user_profile import ACTION_WEIGHTS
 
 
 DIRECTION_ORDER = ["learning", "life", "social", "career"]

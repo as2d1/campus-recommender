@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+import json
 import sqlite3
 import time
 from typing import Any
 
 import pandas as pd
 
-from src.data_loader import ALLOWED_BOARDS, DATA_DIR, DEFAULT_SQLITE_PATH, PROJECT_ROOT, CampusData, load_all_data
+from src.data_loader import DATA_DIR, DEFAULT_SQLITE_PATH, PROJECT_ROOT, CampusData, ensure_app_tables, load_all_data
 from src.feature_engineering import fit_post_text_vectors
 from src.merge_candidates import merge_recall_candidates
 from src.preprocess import get_time_period, preprocess_all
@@ -26,6 +27,7 @@ from src.recall.latest_recall import latest_recall
 from src.recall.profile_recall import profile_recall
 from src.recall.scene_recall import time_scene_recall
 from src.rerank import rerank_candidates
+from src.taxonomy import ALLOWED_BOARDS, BOARD_TOPIC_MAP, taxonomy_payload
 from src.user_profile import build_user_profile_table
 
 
@@ -111,7 +113,12 @@ class CampusRecommendService:
         self.data: CampusData = load_all_data(self.sqlite_path)
         self.result = preprocess_all(self.data)
         if self.result.user_profiles.empty:
-            self.user_profiles = build_user_profile_table(self.result.users, self.result.posts, self.result.behaviors)
+            self.user_profiles = build_user_profile_table(
+                self.result.users,
+                self.result.posts,
+                self.result.behaviors,
+                preferences=self.result.preferences,
+            )
         else:
             self.user_profiles = self.result.user_profiles.copy()
         self.text_bundle = fit_post_text_vectors(self.result.posts)
@@ -151,7 +158,7 @@ class CampusRecommendService:
         time_period = get_time_period(pd.Timestamp.now())
 
         return [
-            hot_recall(user_id, self.result.posts, self.result.post_stats, top_k=recall_top_k),
+            hot_recall(user_id, self.result.posts, top_k=recall_top_k),
             latest_recall(user_id, self.result.posts, top_k=recall_top_k),
             content_recall(
                 user_id,
@@ -170,7 +177,6 @@ class CampusRecommendService:
             ),
             profile_recall(
                 user_id,
-                self.result.users,
                 self.result.posts,
                 self.user_profiles,
                 self.result.post_tags,
@@ -243,6 +249,7 @@ class CampusRecommendService:
         recall_top_k: int = 30,
         candidate_top_k: int = 120,
         exclude_seen: bool = True,
+        persist_exposure: bool = True,
         log_score_stats: bool = False,
     ) -> list[dict[str, Any]]:
         """Return TopN recommendations as JSON-friendly dictionaries."""
@@ -252,7 +259,6 @@ class CampusRecommendService:
         candidates = merge_recall_candidates(
             recall_results,
             self.result.posts,
-            self.result.post_stats,
             top_k_candidates=candidate_top_k,
         )
         ranked = self._rank_candidates(candidates, log_score_stats=log_score_stats)
@@ -295,7 +301,10 @@ class CampusRecommendService:
             "recommend_reason",
         ]
         final = _ensure_columns(final, {column: "" for column in output_columns})
-        return _records(final[output_columns].head(top_n))
+        records = _records(final[output_columns].head(top_n))
+        if persist_exposure:
+            self.record_recommend_exposures(user_id, [str(row["post_id"]) for row in records if row.get("post_id")])
+        return records
 
     def get_post_list(
         self,
@@ -309,8 +318,6 @@ class CampusRecommendService:
         page = max(int(page), 1)
         page_size = max(int(page_size), 1)
         posts = self.result.posts.copy()
-        if "status" in posts.columns:
-            posts = posts[posts["status"].fillna("normal").eq("normal")]
         if board:
             posts = posts[posts["board"].astype(str).eq(str(board))]
         if keyword:
@@ -386,6 +393,89 @@ class CampusRecommendService:
         }
         return {key: _clean_value(value) for key, value in data.items()}
 
+    def get_user_status(self, user_id: str) -> dict[str, Any]:
+        """Return whether the user exists and has cold-start preferences."""
+
+        exists = not self.result.users[self.result.users["user_id"].astype(str).eq(str(user_id))].empty
+        prefs = self.result.preferences
+        has_preferences = bool(
+            not prefs.empty and not prefs[prefs["user_id"].astype(str).eq(str(user_id))].empty
+        )
+        behavior_count = int(
+            self.result.behaviors[self.result.behaviors["user_id"].astype(str).eq(str(user_id))].shape[0]
+        )
+        return {
+            "user_id": user_id,
+            "exists": exists,
+            "has_preferences": has_preferences,
+            "behavior_count": behavior_count,
+            "needs_onboarding": not exists and not has_preferences,
+        }
+
+    def save_user_preferences(
+        self,
+        user_id: str,
+        selected_boards: list[str],
+        selected_tags: list[str],
+    ) -> dict[str, Any]:
+        """Persist cold-start preferences for users absent from USERS."""
+
+        boards = [board for board in dict.fromkeys(selected_boards) if board in ALLOWED_BOARDS]
+        tags = [str(tag).strip() for tag in dict.fromkeys(selected_tags) if str(tag).strip()]
+        if not boards and not tags:
+            raise ValueError("请选择至少一个板块或标签。")
+        now = int(time.time())
+        with sqlite3.connect(self.sqlite_path) as conn:
+            ensure_app_tables(conn)
+            conn.execute(
+                """
+                INSERT INTO USER_PREFERENCES
+                    (user_id, selected_boards_json, selected_tags_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    selected_boards_json = excluded.selected_boards_json,
+                    selected_tags_json = excluded.selected_tags_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    str(user_id),
+                    json.dumps(boards, ensure_ascii=False),
+                    json.dumps(tags, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        self.reload_data()
+        return {
+            "user_id": user_id,
+            "selected_boards": boards,
+            "selected_tags": tags,
+            "topic_types": [BOARD_TOPIC_MAP.get(board, "生活") for board in boards],
+        }
+
+    def record_recommend_exposures(self, user_id: str, post_ids: list[str]) -> None:
+        """Persist recommendation exposure events so later pages avoid repeats."""
+
+        unique_post_ids = [post_id for post_id in dict.fromkeys(post_ids) if post_id]
+        if not unique_post_ids:
+            return
+        event_time = int(time.time())
+        with sqlite3.connect(self.sqlite_path) as conn:
+            rows = [
+                (str(user_id), post_id, "expose", event_time + index, None, "{}")
+                for index, post_id in enumerate(unique_post_ids)
+            ]
+            conn.executemany(
+                """
+                INSERT INTO USER_EVENTS (visitor_id, thread_id, event_type, event_time, duration_ms, extra_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+        self.reload_data()
+
     def record_user_behavior(
         self,
         user_id: str,
@@ -451,14 +541,19 @@ class CampusRecommendService:
         """Rebuild in-memory user profiles and return the refreshed user profile."""
 
         self._find_user(user_id)
-        self.user_profiles = build_user_profile_table(self.result.users, self.result.posts, self.result.behaviors)
+        self.user_profiles = build_user_profile_table(
+            self.result.users,
+            self.result.posts,
+            self.result.behaviors,
+            preferences=self.result.preferences,
+        )
         self.reload_data()
         return self.get_user_profile(user_id)
 
     def get_hot_posts(self, top_n: int = 10) -> list[dict[str, Any]]:
         """Return globally hot posts."""
 
-        recalled = hot_recall("_service_hot", self.result.posts, self.result.post_stats, top_k=top_n)
+        recalled = hot_recall("_service_hot", self.result.posts, top_k=top_n)
         data = recalled.merge(self.result.posts, on="post_id", how="left")
         data = data.merge(self.result.post_stats, on="post_id", how="left", suffixes=("", "_stat"))
         output_columns = [
@@ -480,8 +575,6 @@ class CampusRecommendService:
         """Return all boards and post counts."""
 
         posts = self.result.posts.copy()
-        if "status" in posts.columns:
-            posts = posts[posts["status"].fillna("normal").eq("normal")]
         counts = posts.groupby("board", dropna=False).size().to_dict()
         rows = pd.DataFrame([{"board": board, "post_count": int(counts.get(board, 0))} for board in ALLOWED_BOARDS])
         return _records(rows)
@@ -505,6 +598,11 @@ class CampusRecommendService:
             .head(top_n)
         )
         return _records(tags)
+
+    def get_taxonomy(self) -> dict[str, Any]:
+        """Return shared board/topic/tag taxonomy metadata."""
+
+        return taxonomy_payload()
 
     @staticmethod
     def get_recommend_reason(recall_sources: object) -> str:

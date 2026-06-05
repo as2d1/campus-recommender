@@ -8,10 +8,13 @@ reused by recall, ranking, and later online profile updates.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
+
+from src.taxonomy import INTEREST_DIRECTIONS, infer_interest_direction, join_tags, split_tags
 
 
 ACTION_WEIGHTS = {
@@ -44,34 +47,6 @@ PROFILE_COLUMNS = [
     "last_update_time",
 ]
 
-INTEREST_DIRECTIONS = {
-    "learning": {
-        "topic_types": {"学习"},
-        "boards": set(),
-        "tags": {"课程资料", "考试", "考研", "保研", "学习经验", "408", "复习资料", "课程评价", "选课"},
-        "profile_column": "learning_interest_weight",
-    },
-    "life": {
-        "topic_types": {"生活"},
-        "boards": {"打听求助", "二手闲置"},
-        "tags": {"租房", "宿舍", "食堂", "拼饭", "二手闲置", "校园生活", "教材", "闲置", "求问"},
-        "profile_column": "life_interest_weight",
-    },
-    "social": {
-        "topic_types": {"社交"},
-        "boards": {"恋爱交友", "校园趣事"},
-        "tags": {"交友", "校园趣事", "活动", "社团", "招新", "志愿服务", "校园墙"},
-        "profile_column": "social_interest_weight",
-    },
-    "career": {
-        "topic_types": {"发展"},
-        "boards": {"兼职招聘", "校园招聘"},
-        "tags": {"实习", "就业", "兼职", "招聘", "简历", "面试", "校招"},
-        "profile_column": "career_interest_weight",
-    },
-}
-
-
 @dataclass
 class UserProfile:
     user_id: str
@@ -85,18 +60,18 @@ class UserProfile:
     multi_interest_weights: dict[str, float] = field(default_factory=dict)
 
 
-def split_tags(value: object) -> list[str]:
-    """Split pipe-separated tags and drop blanks."""
+def parse_json_list(value: object) -> list[str]:
+    """Parse a stored JSON list from USER_PREFERENCES."""
 
     if pd.isna(value):
         return []
-    return [tag.strip() for tag in str(value).split("|") if tag.strip()]
-
-
-def join_tags(tags: list[str]) -> str:
-    """Join tags with stable de-duplication."""
-
-    return "|".join(dict.fromkeys([tag for tag in tags if tag]))
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
 
 
 def get_time_period(timestamp: pd.Timestamp) -> str:
@@ -114,18 +89,6 @@ def get_time_period(timestamp: pd.Timestamp) -> str:
     if 18 <= hour < 23:
         return "晚上"
     return "深夜"
-
-
-def infer_interest_direction(board: object, tags: object, topic_type: object = "") -> str:
-    """Infer one of learning/life/social/career from topic, board, or tags."""
-
-    topic = str(topic_type)
-    board_text = str(board)
-    tag_set = set(split_tags(tags))
-    for direction, rules in INTEREST_DIRECTIONS.items():
-        if topic in rules["topic_types"] or board_text in rules["boards"] or tag_set & rules["tags"]:
-            return direction
-    return "life"
 
 
 def is_positive_behavior(row: pd.Series) -> bool:
@@ -213,6 +176,20 @@ def calculate_interest_weights(user_behaviors: pd.DataFrame) -> dict[str, float]
     return {key: round(value / total, 6) for key, value in clipped_scores.items()}
 
 
+def preference_interest_weights(preferred_boards: list[str], preferred_tags: list[str]) -> dict[str, float]:
+    """Derive initial interest weights from cold-start board/tag choices."""
+
+    raw_scores = {direction: 0.0 for direction in INTEREST_DIRECTIONS}
+    for board in preferred_boards:
+        raw_scores[infer_interest_direction(board, "", "")] += 1.0
+    for tag in preferred_tags:
+        raw_scores[infer_interest_direction("", tag, "")] += 0.5
+    total = sum(raw_scores.values())
+    if total <= 0:
+        return {direction: 0.0 for direction in INTEREST_DIRECTIONS}
+    return {direction: round(value / total, 6) for direction, value in raw_scores.items()}
+
+
 def calculate_action_rates(user_behaviors: pd.DataFrame) -> dict[str, float]:
     """Calculate behavior rates for one user."""
 
@@ -229,6 +206,7 @@ def build_user_profile_table(
     users: pd.DataFrame,
     posts: pd.DataFrame,
     behaviors: pd.DataFrame,
+    preferences: pd.DataFrame | None = None,
     now: pd.Timestamp | None = None,
     recent_days: int = 7,
     recent_n: int = 30,
@@ -238,6 +216,9 @@ def build_user_profile_table(
     if now is None:
         now = pd.Timestamp.now()
     enriched = prepare_behavior_features(posts, behaviors, now=now)
+    preference_map = {}
+    if preferences is not None and not preferences.empty:
+        preference_map = preferences.drop_duplicates("user_id", keep="last").set_index("user_id").to_dict("index")
     rows: list[dict[str, object]] = []
 
     for user in users.itertuples(index=False):
@@ -250,12 +231,23 @@ def build_user_profile_table(
         if recent.empty:
             recent = positive.sort_values("timestamp", ascending=False).head(recent_n)
 
+        preference = preference_map.get(user_id, {})
+        preference_boards = parse_json_list(preference.get("selected_boards_json", "[]"))
+        preference_tags = parse_json_list(preference.get("selected_tags_json", "[]"))
+        preference_seed_tags = preference_tags + preference_boards + [
+            infer_interest_direction(board, "", "") for board in preference_boards
+        ]
+
         interest_weights = calculate_interest_weights(user_behaviors)
+        if sum(interest_weights.values()) <= 0:
+            interest_weights = preference_interest_weights(preference_boards, preference_tags)
         rates = calculate_action_rates(user_behaviors)
         view_behaviors = user_behaviors[user_behaviors["action_type"].eq("view")]
         avg_dwell_time = float(view_behaviors["dwell_time"].mean()) if not view_behaviors.empty else 0.0
 
         long_term_tags = weighted_tag_ranking(positive, top_n=8)
+        if not long_term_tags:
+            long_term_tags = preference_seed_tags
         short_term_tags = weighted_tag_ranking(recent, top_n=6)
         if not short_term_tags:
             short_term_tags = long_term_tags[:6]
@@ -265,6 +257,8 @@ def build_user_profile_table(
             "board",
             top_n=4,
         )
+        if not preferred_boards:
+            preferred_boards = preference_boards
         active_time_period = weighted_value_ranking(user_behaviors, "time_period", top_n=1)
 
         rows.append(
@@ -291,6 +285,7 @@ def build_user_profiles(
     users: pd.DataFrame,
     posts: pd.DataFrame,
     behaviors: pd.DataFrame,
+    preferences: pd.DataFrame | None = None,
     user_profiles_df: pd.DataFrame | None = None,
     post_id_to_index: dict[str, int] | None = None,
     text_matrix: sparse.csr_matrix | None = None,
@@ -308,7 +303,7 @@ def build_user_profiles(
     profile_df = (
         user_profiles_df.copy()
         if user_profiles_df is not None and not user_profiles_df.empty
-        else build_user_profile_table(users, posts, behaviors, now=now)
+        else build_user_profile_table(users, posts, behaviors, preferences=preferences, now=now)
     )
     profile_rows = profile_df.set_index("user_id").to_dict("index") if not profile_df.empty else {}
 

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.recall import filter_valid_posts, format_recall_result, split_tags
+from src.recall import format_recall_result, split_tags
 
 
 def profile_recall(
     user_id: str,
-    users: pd.DataFrame,
     posts: pd.DataFrame,
     user_profiles: pd.DataFrame,
     post_tags: pd.DataFrame | None = None,
@@ -17,19 +16,14 @@ def profile_recall(
 ) -> pd.DataFrame:
     """Recall posts matching behavior-derived user tags and boards."""
 
-    user_rows = users[users["user_id"].astype(str).eq(str(user_id))]
-    if user_rows.empty:
-        return pd.DataFrame(columns=["user_id", "post_id", "recall_score", "recall_source"])
-    user = user_rows.iloc[0]
-
-    profile_rows = user_profiles[user_profiles["user_id"].astype(str).eq(str(user_id))] if not user_profiles.empty else pd.DataFrame()
+    profile_rows = user_profiles[user_profiles["user_id"].astype(str).eq(str(user_id))]
     profile = profile_rows.iloc[0] if not profile_rows.empty else pd.Series(dtype=object)
 
     profile_tags = set(split_tags(profile.get("long_term_tags", "")))
     profile_tags |= set(split_tags(profile.get("short_term_tags", "")))
     preferred_boards = set(split_tags(profile.get("preferred_boards", "")))
 
-    candidates = filter_valid_posts(posts).copy()
+    candidates = posts.drop_duplicates("post_id", keep="last").copy()
     board_sizes = candidates.groupby("board").size().to_dict()
     scores = []
     for _, post in candidates.iterrows():

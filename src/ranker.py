@@ -291,12 +291,11 @@ def merge_candidate_features(
                 "content_length",
                 "img_count",
                 "has_image",
-                "has_contact_info",
             ]
             if column in posts_df.columns
         ]
         data = data.merge(posts_df[post_columns].drop_duplicates("post_id"), on="post_id", how="left", suffixes=("", "_post"))
-        for column in ["board", "tags", "topic_type", "post_age_hours", "content_length", "img_count", "has_image", "has_contact_info"]:
+        for column in ["board", "tags", "topic_type", "post_age_hours", "content_length", "img_count", "has_image"]:
             post_column = f"{column}_post"
             if post_column in data.columns:
                 data[column] = data[column].where(data[column].notna(), data[post_column]) if column in data.columns else data[post_column]

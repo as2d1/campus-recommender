@@ -31,7 +31,12 @@ def prepare_features_and_profiles() -> tuple:
     data = load_all_data()
     result = preprocess_all(data)
     text_bundle = fit_post_text_vectors(result.posts)
-    profile_table = build_user_profile_table(result.users, result.posts, result.behaviors)
+    profile_table = build_user_profile_table(
+        result.users,
+        result.posts,
+        result.behaviors,
+        preferences=result.preferences,
+    )
 
     multi_bundle = build_multi_interest_representations(
         users=result.users,
@@ -44,6 +49,7 @@ def prepare_features_and_profiles() -> tuple:
         users=result.users,
         posts=result.posts,
         behaviors=result.behaviors,
+        preferences=result.preferences,
         user_profiles_df=profile_table,
         post_id_to_index=text_bundle.post_id_to_index,
         text_matrix=text_bundle.post_text_matrix,
@@ -73,12 +79,13 @@ def main() -> None:
     result, _ = prepare_features_and_profiles()
 
     print("\nTraining DeepFM...")
-    _, _, logs = train_pipeline(epoch=10, batch_size=128, learning_rate=5e-3)
+    _, _, logs = train_pipeline(epoch=6, batch_size=128, learning_rate=5e-3)
     print(f"training logs: {logs}")
     print(f"model path: {MODEL_PATH}")
     print(f"encoder path: {ENCODER_PATH}")
 
-    user_id = str(result.users.iloc[0]["user_id"])
+    # user_id = str(result.users.iloc[0]["user_id"])
+    user_id = "demo_user_A"
     print(f"\nTop10 recommendations for user_id={user_id}")
     recommendations = recommend_for_user(user_id, top_n=10, log_score_stats=True)
     print(recommendations.to_string(index=False))

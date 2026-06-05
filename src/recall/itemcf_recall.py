@@ -6,18 +6,15 @@ import math
 
 import pandas as pd
 
-from src.recall import filter_valid_posts, format_recall_result, get_interacted_posts
+from src.recall import format_recall_result, get_interacted_posts
 
 
 def build_positive_interactions(behaviors: pd.DataFrame) -> pd.DataFrame:
     """Keep positive feedback and normalize behavior weights."""
 
     rows = behaviors.copy()
-    if "is_positive" in rows.columns:
-        rows = rows[rows["is_positive"].fillna(0).astype(int).eq(1)]
-    else:
-        rows = rows[rows["action_type"].isin({"view", "like", "comment", "collect"})]
-    rows["action_weight"] = pd.to_numeric(rows.get("action_weight", 1.0), errors="coerce").fillna(1.0)
+    rows = rows[rows["is_positive"].astype(int).eq(1)]
+    rows["action_weight"] = pd.to_numeric(rows["action_weight"], errors="coerce").fillna(1.0)
     rows["interaction_weight"] = rows["action_weight"].clip(lower=1.0)
     return rows[["user_id", "post_id", "interaction_weight"]]
 
@@ -67,7 +64,7 @@ def itemcf_recall(
     if item_similarity is None:
         item_similarity = build_item_similarity(positive)
 
-    valid_post_ids = set(filter_valid_posts(posts)["post_id"].astype(str))
+    valid_post_ids = set(posts["post_id"].astype(str))
     seen = get_interacted_posts(behaviors, user_id)
     user_positive = positive[positive["user_id"].astype(str).eq(str(user_id))]
     if user_positive.empty:
