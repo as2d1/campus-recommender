@@ -79,7 +79,7 @@
 </template>
 
 <script setup>
-import { onActivated, ref } from 'vue'
+import { onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ActionBar from '../components/ActionBar.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -107,8 +107,29 @@ const seedTags = ref([])
 checkUserAndLoad()
 
 onActivated(() => {
-  posts.value.forEach((post) => applyPostStats(post))
+  syncUserAndReload()
 })
+
+onMounted(() => {
+  window.addEventListener('campus-user-change', syncUserAndReload)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('campus-user-change', syncUserAndReload)
+})
+
+function syncUserAndReload() {
+  const latestUserId = localStorage.getItem('campus_user_id') || DEFAULT_USER_ID
+  if (latestUserId !== userId.value) {
+    userId.value = latestUserId
+    posts.value = []
+    selectedBoards.value = []
+    selectedTags.value = []
+    checkUserAndLoad()
+    return
+  }
+  posts.value.forEach((post) => applyPostStats(post))
+}
 
 async function checkUserAndLoad() {
   loading.value = true

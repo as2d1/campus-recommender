@@ -1,1 +1,0 @@
-import{o as e,c as t,t as s}from"./index-DuO-b0aI.js";const o={class:"tag-badge"},l={__name:"TagBadge",props:{label:{type:String,default:""}},setup(a){return(c,n)=>(e(),t("span",o,"#"+s(a.label||"校园"),1))}};export{l as _};

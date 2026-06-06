@@ -89,6 +89,7 @@ function applyUser() {
   if (!next) return
   userId.value = next
   localStorage.setItem('campus_user_id', next)
+  window.dispatchEvent(new CustomEvent('campus-user-change', { detail: { userId: next } }))
   loadProfile()
 }
 
